@@ -1,0 +1,38 @@
+# product/decorators.py
+from django.contrib.auth.decorators import user_passes_test
+from django.shortcuts import redirect
+
+
+def admin_or_manager_required(view_func=None, redirect_url='/orderlist/'):
+    def check_user(user):
+        if not user.is_authenticated:
+            return False
+        if user.is_superuser:
+            return True
+        # return user.groups.filter(name='1').exists()
+
+    decorator = user_passes_test(check_user, login_url=redirect_url)
+    
+    if view_func:
+        return decorator(view_func)
+    return decorator
+
+
+
+# product/decorators.py
+from django.contrib.auth.decorators import user_passes_test
+
+def staff_or_representative_required(view_func=None, redirect_url='/customer/orders/'):
+
+    def check_user(user):
+        if not user.is_authenticated:
+            return False
+        if user.is_superuser:
+            return True
+        # چک کردن عضویت در گروه‌های مجاز
+        return user.groups.filter(name__in=['1']).exists()
+
+    decorator = user_passes_test(check_user, login_url=redirect_url)
+    if view_func:
+        return decorator(view_func)
+    return decorator

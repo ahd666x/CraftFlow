@@ -1,0 +1,173 @@
+{% extends 'base_shop.html' %}
+{% load static %}
+{% load product_filters %}
+
+{% block title %}جزئیات ارسال {{ plate }}{% endblock %}
+
+{% block extra_css %}
+<style>
+    @media print {
+        .no-print { display: none !important; }
+        .print-container { padding: 0 !important; margin: 0 !important; }
+        .print-container .card { box-shadow: none !important; border: 1px solid #ddd !important; }
+        body { background: white !important; }
+        .signature-section div { border-bottom: 2px solid #000 !important; }
+    }
+    
+    .detail-card {
+        background: #fff;
+        border-radius: 16px;
+        box-shadow: 0 4px 20px rgba(0,0,0,0.06);
+        padding: 1.5rem;
+        margin-bottom: 1.5rem;
+    }
+    
+    .detail-card .header-info {
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: space-between;
+        align-items: center;
+        border-bottom: 2px solid #f1f3f5;
+        padding-bottom: 1rem;
+        margin-bottom: 1.5rem;
+    }
+    
+    .detail-card .header-info .title {
+        font-size: 1.3rem;
+        font-weight: 700;
+    }
+    
+    .detail-card .header-info .plate-badge {
+        background: #0d6efd;
+        color: #fff;
+        padding: 0.4rem 1.5rem;
+        border-radius: 30px;
+        font-weight: 600;
+        font-size: 1.1rem;
+    }
+    
+    .detail-table th {
+        background: #f8f9fa;
+        font-weight: 600;
+        white-space: nowrap;
+    }
+    
+    .detail-table td, .detail-table th {
+        vertical-align: middle;
+        padding: 0.6rem 0.8rem;
+        font-size: 0.9rem;
+        text-align: center;
+    }
+    
+    .detail-table .total-row {
+        background: #f1f3f5;
+        font-weight: 700;
+    }
+    
+    .signature-section {
+        display: flex;
+        justify-content: space-between;
+        margin-top: 2.5rem;
+        padding-top: 1rem;
+        border-top: 2px dashed #dee2e6;
+    }
+    
+    .signature-section div {
+        text-align: center;
+        width: 45%;
+        padding: 0.5rem 0;
+        border-bottom: 2px solid #adb5bd;
+        font-size: 0.9rem;
+        color: #6c757d;
+    }
+    
+    .info-label {
+        font-weight: 600;
+        color: #495057;
+    }
+    
+    .info-value {
+        color: #212529;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container py-4 print-container">
+    <!-- دکمه‌های چاپ و بازگشت -->
+    <div class="d-flex justify-content-between align-items-center mb-4 no-print">
+        <h4 class="mb-0"><i class="bi bi-receipt me-2"></i>جزئیات ارسال</h4>
+        <div>
+            <button onclick="window.print()" class="btn btn-primary me-2">
+                <i class="bi bi-printer"></i> چاپ
+            </button>
+            <a href="{% url 'customer_shipments' %}" class="btn btn-outline-secondary">
+                <i class="bi bi-arrow-right"></i> بازگشت
+            </a>
+        </div>
+    </div>
+
+    <!-- کارت اصلی -->
+    <div class="detail-card">
+
+
+        <!-- اطلاعات نماینده، مشتری، تاریخ و تعداد -->
+        <div class="row g-3 mb-3">
+            <div class="col-md-3">
+                <span class="info-label">نماینده:</span>
+                <span class="info-value">{{ representative_name }}</span>
+            </div>
+            <div class="col-md-3">
+                <span class="info-label">مشتری:</span>
+                <span class="info-value">{{ customer_name }}</span>
+            </div>
+            <div class="col-md-3">
+                <span class="info-label">تاریخ:</span>
+                <span class="info-value">{{ shamsi_date }}</span>
+            </div>
+            <div class="col-md-3">
+                <span class="info-label">تعداد اقلام:</span>
+                <span class="info-value">{{ units|length }}</span>
+            </div>
+        </div>
+
+        <!-- جدول کالاها (بدون ستون تاریخ) -->
+        <div class="table-responsive">
+            <table class="table table-bordered detail-table">
+                <thead>
+                    <tr>
+                        <th>ردیف</th>
+                        <th>شماره سفارش</th>
+                        <th>محصول</th>
+                        <th>مشتری</th>
+                        <th>توضیحات</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for unit in units %}
+                    <tr>
+                        <td>{{ forloop.counter }}</td>
+                        <td>
+                            {% if unit.order_item.order.number %}
+                                {{ unit.order_item.order.number }}
+                            {% else %}
+                                {{ unit.order_item.order.id }}
+                            {% endif %}
+                        </td>
+                        <td>{{ unit.order_item.product.category.name }} {{ unit.order_item.product.name }}</td>
+                        <td>{{ unit.order_item.order.customer.name }}</td>
+                        <td>{{ unit.order_item.notes|default:"-" }}</td>
+                    </tr>
+                    {% empty %}
+                    <tr>
+                        <td colspan="6" class="text-center">هیچ کالایی در این ارسال وجود ندارد.</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+
+
+    </div>
+</div>
+{% endblock %}

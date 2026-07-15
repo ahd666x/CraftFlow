@@ -1,0 +1,162 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block content %}
+<div class="container py-4">
+    <h2 class="mb-4"><i class="bi bi-cart-plus"></i> ثبت سفارش جدید</h2>
+
+    <form method="post" id="order-form">
+        {% csrf_token %}
+
+        <!-- ========== بخش مشتری ========== -->
+        <div class="card shadow-sm mb-4">
+            <div class="card-header bg-primary text-white">
+                <h5 class="mb-0">اطلاعات مشتری</h5>
+            </div>
+            <div class="card-body">
+                <div class="row">
+                    <div class="col-md-4 mb-3">
+                        <label class="form-label">انتخاب مشتری قبلی</label>
+                        <select class="form-select" id="customer-select" onchange="fillCustomerFields(this.value)">
+                            <option value="">مشتری جدید...</option>
+                            {% for cust in existing_customers %}
+                                <option value="{{ cust.id }}">{{ cust.name }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                </div>
+                <div class="row" id="new-customer-fields">
+                    <div class="col-md-4 mb-3">
+                        {{ customer_form.name.label_tag }}
+                        {{ customer_form.name }}
+                    </div>
+                    <div class="col-md-4 mb-3">
+                        {{ customer_form.phone.label_tag }}
+                        {{ customer_form.phone }}
+                    </div>
+                    <div class="col-md-4 mb-3">
+                        {{ customer_form.number.label_tag }}
+                        {{ customer_form.number }}
+                    </div>
+                    <div class="col-md-12 mb-3">
+                        {{ customer_form.address.label_tag }}
+                        {{ customer_form.address }}
+                    </div>
+                </div>
+                <input type="hidden" name="customer_id" id="customer-id">
+            </div>
+        </div>
+
+        <!-- ========== بخش محصول ========== -->
+        <div class="card shadow-sm mb-4">
+            <div class="card-header bg-success text-white">
+                <h5 class="mb-0">افزودن محصول</h5>
+            </div>
+            <div class="card-body">
+                <div class="row g-3">
+                    <div class="col-md-4">
+                        {{ item_form.category.label_tag }}
+                        {{ item_form.category }}
+                    </div>
+                    <div class="col-md-4">
+                        {{ item_form.product.label_tag }}
+                        {{ item_form.product }}
+                    </div>
+                    <div class="col-md-2">
+                        {{ item_form.quantity.label_tag }}
+                        {{ item_form.quantity }}
+                    </div>
+                    <div class="col-md-2">
+                        {{ item_form.size.label_tag }}
+                        {{ item_form.size }}
+                    </div>
+                    <div class="col-md-12">
+                        {{ item_form.notes.label_tag }}
+                        {{ item_form.notes }}
+                    </div>
+                </div>
+
+                <!-- رنگ‌ها -->
+                <h6 class="mt-4">رنگ‌ها</h6>
+                <div class="row g-3">
+                    {% for field in color_form %}
+                        <div class="col-md-3 mb-2 color-field" data-part="{{ field.name|slice:'6:' }}">
+                            {{ field.label_tag }} {{ field }}
+                        </div>
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+
+        <div class="d-flex gap-2">
+            <button type="submit" name="add_another" class="btn btn-primary">ذخیره و افزودن آیتم دیگر</button>
+            <button type="submit" name="finish" class="btn btn-success">ذخیره و پایان</button>
+            <a href="{% url 'order_list' %}" class="btn btn-secondary">انصراف</a>
+        </div>
+    </form>
+</div>
+
+<script>
+$(document).ready(function() {
+    // بارگذاری محصولات بر اساس دسته
+    $('#id_category').change(function() {
+        var catId = $(this).val();
+        if (catId) {
+            $.ajax({
+                url: '/ajax/load-products/',
+                data: {'category': catId},
+                success: function(data) {
+                    var $prod = $('#id_product');
+                    $prod.empty().append('<option value="">---------</option>');
+                    $.each(data, function(i, p) {
+                        $prod.append(`<option value="${p.id}">${p.name}</option>`);
+                    });
+                }
+            });
+        } else {
+            $('#id_product').html('<option value="">---------</option>');
+        }
+    });
+
+    // فیلتر رنگ‌ها بر اساس محصول
+    $('#id_product').on('change', function() {
+        var prodId = $(this).val();
+        if (prodId) {
+            fetch(`/ajax/load-product-colors/${prodId}/`)
+                .then(res => res.json())
+                .then(data => {
+                    const allowed = Object.keys(data.defaults);
+                    document.querySelectorAll('.color-field').forEach(el => {
+                        const part = el.getAttribute('data-part');
+                        if (allowed.includes(part)) {
+                            el.style.display = '';
+                            const sel = el.querySelector('select');
+                            if (sel && data.defaults[part]) sel.value = data.defaults[part];
+                        } else {
+                            el.style.display = 'none';
+                            const sel = el.querySelector('select');
+                            if (sel) sel.value = '';
+                        }
+                    });
+                });
+        }
+    });
+
+    // انتخاب مشتری از لیست
+    function fillCustomerFields(custId) {
+        if (custId) {
+            $('#customer-id').val(custId);
+            $('#new-customer-fields').hide();
+            // پاک کردن فیلدهای دستی (در صورت وجود)
+            $('#id_name').val('');
+            $('#id_phone').val('');
+            $('#id_address').val('');
+            $('#id_number').val('');
+        } else {
+            $('#customer-id').val('');
+            $('#new-customer-fields').show();
+        }
+    }
+});
+</script>
+{% endblock %}

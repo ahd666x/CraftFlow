@@ -1,0 +1,363 @@
+{% extends 'base.html' %}
+{% load static %}
+{% load product_filters %}
+
+{% block title %}گزارش تولید{% endblock %}
+
+{% block extra_css %}
+<style>
+    :root {
+        --bs-card-bg: #ffffff;
+        --bs-card-shadow: 0 4px 24px rgba(0,0,0,0.04);
+    }
+
+    body {
+        background-color: #f7f9fc;
+    }
+
+    .summary-card {
+        background: var(--bs-card-bg);
+        border: none;
+        border-radius: 16px;
+        box-shadow: var(--bs-card-shadow);
+        padding: 1.2rem 1rem;
+        transition: transform 0.15s ease;
+    }
+    .summary-card:hover { transform: translateY(-2px); }
+    .summary-icon {
+        width: 44px; height: 44px; border-radius: 12px;
+        display: flex; align-items: center; justify-content: center;
+        font-size: 1.4rem; margin-bottom: 0.8rem;
+    }
+    .filter-panel {
+        background: var(--bs-card-bg); border-radius: 16px;
+        box-shadow: var(--bs-card-shadow); padding: 1.5rem;
+    }
+    .table-report {
+        background: var(--bs-card-bg); border-radius: 16px;
+        box-shadow: var(--bs-card-shadow); overflow: hidden;
+    }
+    .table-report thead th {
+        background-color: #f1f5f9; color: #334155;
+        font-weight: 600; border-bottom: 2px solid #e2e8f0;
+        white-space: nowrap; font-size: 0.85rem; padding: 0.6rem 0.4rem;
+    }
+    .table-report tbody td {
+        vertical-align: middle; border-color: #f1f5f9;
+        font-size: 0.8rem; padding: 0.5rem 0.4rem;
+    }
+    .table-report tbody tr:hover { background-color: #f8fafc; }
+    .stage-badge {
+        font-size: 0.7rem; padding: 0.2rem 0.4rem;
+        border-radius: 20px; font-weight: 500;
+    }
+    .btn-glass {
+        background: rgba(255,255,255,0.7); backdrop-filter: blur(6px);
+        border: 1px solid rgba(0,0,0,0.05); border-radius: 10px;
+        padding: 0.4rem 1rem; transition: 0.15s;
+    }
+    .btn-glass:hover {
+        background: rgba(255,255,255,0.95);
+        box-shadow: 0 4px 12px rgba(0,0,0,0.06);
+    }
+    .form-control-glass {
+        background: rgba(255,255,255,0.8); border: 1px solid #e2e8f0;
+        border-radius: 10px; padding: 0.4rem 0.8rem;
+    }
+    .form-select-glass {
+        background: rgba(255,255,255,0.8); border: 1px solid #e2e8f0;
+        border-radius: 10px; padding: 0.4rem 0.8rem;
+    }
+
+    .stage-col { transition: 0.2s; }
+    .stage-toggle-item { cursor: pointer; }
+    .stage-toggle-item input { margin-left: 0.5rem; }
+
+    @media (max-width: 767.98px) {
+        .hide-mobile { display: none; }
+        .table-report thead th, .table-report tbody td {
+            font-size: 0.7rem; padding: 0.3rem 0.2rem;
+        }
+        .stage-badge { font-size: 0.6rem; padding: 0.1rem 0.3rem; }
+        .summary-card { padding: 0.8rem 0.5rem; }
+        .summary-icon { width: 36px; height: 36px; font-size: 1.2rem; }
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4">
+    <!-- هدر -->
+    <div class="d-flex align-items-center mb-4">
+        <div class="bg-white p-3 rounded-3 shadow-sm me-3">
+            <i class="bi bi-bar-chart-line fs-3 text-primary"></i>
+        </div>
+        <div>
+            <h4 class="mb-0 fw-bold">گزارش تولید</h4>
+        </div>
+    </div>
+
+
+
+    <!-- پنل فیلترها -->
+    <div class="filter-panel mb-4">
+        <form method="get" id="filter-form">
+            <div class="row g-3 align-items-end">
+                <div class="col-md-3 col-sm-6">
+                    <label class="form-label small text-muted">جستجو</label>
+                    <div class="input-group">
+                        <span class="input-group-text bg-white border-end-0"><i class="bi bi-search"></i></span>
+                        <input type="text" name="q" class="form-control form-control-glass border-start-0" placeholder="شماره سفارش، نماینده، محصول..." value="{{ search_query|default:'' }}">
+                    </div>
+                </div>
+                <div class="col-md-2 col-sm-6">
+                    <label class="form-label small text-muted">نماینده</label>
+                    <select name="representative" class="form-select form-select-glass">
+                        <option value="">همه</option>
+                        {% for rep in representatives %}
+                            <option value="{{ rep.id }}" {% if selected_representative == rep.id|stringformat:"s" %}selected{% endif %}>{{ rep.get_full_name|default:rep.username }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="col-md-2 col-sm-6">
+                    <label class="form-label small text-muted">دسته</label>
+                    <select name="category" class="form-select form-select-glass" id="id_category">
+                        <option value="">همه</option>
+                        {% for cat in categories %}
+                            <option value="{{ cat.id }}" {% if selected_category == cat.id|stringformat:"s" %}selected{% endif %}>{{ cat.name }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="col-md-2 col-sm-6">
+                    <label class="form-label small text-muted">محصول</label>
+                    <select name="product" class="form-select form-select-glass" id="id_product">
+                        <option value="">همه</option>
+                        {% for prod in products %}
+                            <option value="{{ prod.id }}" {% if selected_product == prod.id|stringformat:"s" %}selected{% endif %}>{{ prod.name }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="col-md-3 col-sm-12">
+                    <label class="form-label small text-muted">مرحله تولید</label>
+                    <div class="d-flex gap-1">
+                        <select name="stage_pending" class="form-select form-select-glass">
+                            <option value="">انجام‌نشده</option>
+                            {% for code, name in station_choices %}
+                                {% if code != 'packaging' and code != 'shipping' %}
+                                    <option value="{{ code }}" {% if stage_pending == code %}selected{% endif %}>{{ name }}</option>
+                                {% endif %}
+                            {% endfor %}
+                        </select>
+                        <select name="stage_done" class="form-select form-select-glass">
+                            <option value="">انجام‌شده</option>
+                            {% for code, name in station_choices %}
+                                {% if code != 'packaging' and code != 'shipping' %}
+                                    <option value="{{ code }}" {% if stage_done == code %}selected{% endif %}>{{ name }}</option>
+                                {% endif %}
+                            {% endfor %}
+                        </select>
+                    </div>
+                </div>
+            </div>
+
+
+
+
+            <div class="row g-3 align-items-end mt-2">
+                <div class="col-md-2 col-sm-6">
+                    <label class="form-label small text-muted">بسته‌بندی</label>
+                    <select name="packaging_status" class="form-select form-select-glass">
+                        <option value="">همه</option>
+                        <option value="done" {% if packaging_status == 'done' %}selected{% endif %}>کامل شده</option>
+                        <option value="pending" {% if packaging_status == 'pending' %}selected{% endif %}>ناقص</option>
+                        <option value="none" {% if packaging_status == 'none' %}selected{% endif %}> بسته‌بندی نشده</option>
+                    </select>
+                </div>
+                <div class="col-md-2 col-sm-6">
+                    <label class="form-label small text-muted">ارسال</label>
+                    <select name="shipping_status" class="form-select form-select-glass">
+                        <option value="">همه</option>
+                        <option value="done" {% if shipping_status == 'done' %}selected{% endif %}>کامل شده</option>
+                        <option value="pending" {% if shipping_status == 'pending' %}selected{% endif %}>ناقص</option>
+                        <option value="none" {% if shipping_status == 'none' %}selected{% endif %}> ارسال نشده</option>
+                    </select>
+                </div>
+
+
+
+
+
+
+
+                <div class="col-md-4 col-sm-12 d-flex align-items-end gap-2">
+                    <button type="submit" class="btn btn-primary rounded-pill px-4"><i class="bi bi-funnel me-1"></i> فیلتر</button>
+                    <a href="?" class="btn btn-outline-secondary rounded-pill px-4"><i class="bi bi-x-circle me-1"></i> حذف فیلتر</a>
+                </div> 
+            </div>
+        </form>
+        <!-- دکمه انتخاب مراحل نمایشی -->
+        <div class="mt-3">
+            <div class="dropdown">
+                <button class="btn btn-sm btn-glass dropdown-toggle" type="button" id="stageToggleDropdown" data-bs-toggle="dropdown" aria-expanded="false">
+                    <i class="bi bi-layout-three-columns me-1"></i> انتخاب          
+                </button>
+                <ul class="dropdown-menu p-2" aria-labelledby="stageToggleDropdown" style="max-height: 300px; overflow-y: auto;">
+                    {% for code, name in station_choices %}
+                    <li class="dropdown-item stage-toggle-item">
+                        <label>
+                            <input type="checkbox" class="stage-toggle" data-stage="{{ code }}" checked> {{ name }}
+                        </label>
+                    </li>
+                    {% endfor %}
+                </ul>
+            </div>
+        </div>
+    </div>
+
+    <!-- جدول گزارش -->
+    {% if report_data %}
+    <div class="table-report p-3">
+        <table class="table table-report align-middle mb-0">
+            <thead>
+                <tr>
+                    <th>سفارش</th>
+                    <th class="hide-mobile">نماینده</th>
+                    <th>دسته</th>
+                    <th>محصول</th>
+                    {% for code, name in station_choices %}
+                        {% if code != 'packaging' and code != 'shipping' %}
+                            <th class="text-center stage-col stage-col-{{ code }} {% if forloop.counter > 4 %}hide-mobile{% endif %}">{{ name }}</th>
+                        {% endif %}
+                    {% endfor %}
+                    <th class="text-center stage-col stage-col-packaging">بسته‌بندی</th>
+                    <th class="text-center stage-col stage-col-shipping">ارسال</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for row in report_data %}
+                <tr>
+                    <td class="text-nowrap">
+                        <a href="{% url 'item_detail' row.item.id %}" class="text-decoration-none fw-semibold">
+                            #{{ row.item.order.id }}/{{ row.item.id }}
+                        </a>
+                    </td>
+                    <td class="hide-mobile">{{ row.representative }}</td>
+                    <td>{{ row.category_name }}</td>
+                    <td>{{ row.item.product.name }}</td>
+
+                    {% for code, name in station_choices %}
+                        {% if code != 'packaging' and code != 'shipping' %}
+                            <td class="text-center stage-col stage-col-{{ code }} {% if forloop.counter > 4 %}hide-mobile{% endif %}">
+                                {% with date=row.stage_status|get_item:code %}
+                                    {% if date %}
+                                        <span class="stage-badge bg-success bg-opacity-10 text-success">{{ date }}</span>
+                                    {% else %}
+                                        <span class="text-muted">⏳</span>
+                                    {% endif %}
+                                {% endwith %}
+                            </td>
+                        {% endif %}
+                    {% endfor %}
+
+                    <!-- بسته‌بندی (تعداد + تاریخ در صورت تکمیل) -->
+                    <td class="text-center stage-col stage-col-packaging">
+                        {% with date=row.stage_status|get_item:'packaging' %}
+                            {% if row.total_units > 0 %}
+                                <div class="fw-semibold small">{{ row.packed_units }} / {{ row.total_units }}</div>
+                                {% if date %}
+                                    <span class="stage-badge bg-success bg-opacity-10 text-success mt-1">{{ date }}</span>
+                                {% else %}
+                                    <span class="text-muted">⏳</span>
+                                {% endif %}
+                            {% else %}
+                                <span class="text-muted">-</span>
+                            {% endif %}
+                        {% endwith %}
+                    </td>
+
+                    <!-- ارسال (تعداد + تاریخ در صورت تکمیل) -->
+                    <td class="text-center stage-col stage-col-shipping">
+                        {% with date=row.stage_status|get_item:'shipping' %}
+                            {% if row.total_units > 0 %}
+                                <div class="fw-semibold small">{{ row.shipped_units }} / {{ row.total_units }}</div>
+                                {% if date %}
+                                    <span class="stage-badge bg-success bg-opacity-10 text-success mt-1">{{ date }}</span>
+                                {% else %}
+                                    <span class="text-muted">⏳</span>
+                                {% endif %}
+                            {% else %}
+                                <span class="text-muted">-</span>
+                            {% endif %}
+                        {% endwith %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <div class="text-center py-5 bg-white rounded-3 shadow-sm">
+        <i class="bi bi-inbox display-3 text-muted mb-3"></i>
+        <h5 class="text-muted">هیچ آیتمی یافت نشد</h5>
+        <p class="text-muted">با تغییر فیلترها می‌توانید نتایج را بررسی کنید.</p>
+    </div>
+    {% endif %}
+</div>
+
+<script>
+(function() {
+    // ===== بارگذاری محصولات =====
+    const categorySelect = document.getElementById('id_category');
+    const productSelect = document.getElementById('id_product');
+    const initialProduct = "{{ selected_product|default:'' }}";
+
+    if (categorySelect && productSelect) {
+        async function loadProducts(categoryId) {
+            if (!categoryId) {
+                productSelect.innerHTML = '<option value="">همه</option>';
+                return;
+            }
+            try {
+                const response = await fetch(`/ajax/load-products/?category=${categoryId}`);
+                const data = await response.json();
+                productSelect.innerHTML = '<option value="">همه</option>';
+                data.forEach(product => {
+                    const option = document.createElement('option');
+                    option.value = product.id;
+                    option.textContent = product.name;
+                    productSelect.appendChild(option);
+                });
+                if (initialProduct) productSelect.value = initialProduct;
+            } catch (error) {
+                console.error('خطا در بارگذاری محصولات:', error);
+            }
+        }
+
+        categorySelect.addEventListener('change', function() {
+            loadProducts(this.value);
+        });
+
+        if (categorySelect.value) loadProducts(categorySelect.value);
+    }
+
+    // ===== مدیریت نمایش/مخفی مراحل =====
+    const toggles = document.querySelectorAll('.stage-toggle');
+    function updateStageVisibility() {
+        toggles.forEach(cb => {
+            const code = cb.dataset.stage;
+            const els = document.querySelectorAll('.stage-col-' + code);
+            els.forEach(el => {
+                el.style.display = cb.checked ? '' : 'none';
+            });
+        });
+    }
+    toggles.forEach(cb => {
+        cb.addEventListener('change', updateStageVisibility);
+        cb.closest('.dropdown-item').addEventListener('click', function(e) {
+            e.stopPropagation();
+        });
+    });
+    updateStageVisibility();
+})();
+</script>
+{% endblock %}

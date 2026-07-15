@@ -1,0 +1,121 @@
+{% load product_filters %}
+{% load static %}
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <title>گزارش ارسال‌شده‌ها | سلوی چوب</title>
+    <style>
+        body {
+            font-family: Tahoma, sans-serif;
+            direction: rtl;
+            margin: 20px;
+            font-size: 13px;
+            color: #000;
+        }
+        h3 { margin-bottom: 10px; }
+        .filters {
+            background: #f5f5f5;
+            padding: 10px;
+            border-radius: 5px;
+            margin-bottom: 15px;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            align-items: end;
+        }
+        .filters label { font-size: 11px; display: block; }
+        .filters input, .filters select { padding: 3px; font-size: 12px; }
+        table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+        th, td { border: 1px solid #ccc; padding: 4px 6px; text-align: center; }
+        th { background-color: #e9e9e9; }
+        .no-print { }
+        @media print {
+            .no-print { display: none; }
+        }
+    </style>
+</head>
+<body>
+    <h3>📦 گزارش ارسال‌شده‌ها</h3>
+
+    <form method="get" class="filters no-print">
+        <div>
+            <label>تاریخ</label>
+            <input type="text" name="date" id="datepicker" value="{{ selected_date }}" autocomplete="off" style="width: 120px;">
+        </div>
+        <div>
+            <label>نماینده</label>
+            <select name="representative">
+                <option value="">همه</option>
+                {% for rep in representatives %}
+                    <option value="{{ rep.id }}" {% if selected_representative == rep.id|stringformat:"s" %}selected{% endif %}>{{ rep.get_full_name|default:rep.username }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div>
+            <label>شماره سفارش</label>
+            <input type="text" name="order_id" value="{{ selected_order }}" placeholder=" " style="width:80px;">
+        </div>
+        <div>
+            <label>پلاک</label>
+            <select name="plate">
+                <option value="">همه</option>
+                {% for plate in plates %}
+                    <option value="{{ plate }}" {% if selected_plate == plate %}selected{% endif %}>{{ plate }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div style="display:flex; gap:5px;">
+            <button type="submit"> فیلتر</button>
+            <button type="submit" name="print" value="1">🖨️ چاپ برگه ترخیص</button>
+        </div>
+    </form>
+
+    {% if units %}
+    <table>
+        <thead>
+            <tr>
+                <th>ردیف</th>
+                <th>تاریخ ارسال</th>
+                <th>شماره سفارش</th>
+                {% comment %} <th>آیتم</th> {% endcomment %}
+                <th>محصول</th>
+                <th>مشتری</th>
+                <th>نماینده</th>
+                <th>توضیحات</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for unit in units %}
+            <tr>
+                <td>{{ forloop.counter }}</td>
+                <td>{{ unit.shipped_at|persian_date }}</td>
+                <td>{{ unit.order_item.order.id }}/{{ unit.order_item.id }}</td>
+                {% comment %} <td>{{ unit.order_item.id }}</td> {% endcomment %}
+                <td>{{ unit.order_item.product.category.name }} {{ unit.order_item.product.name }}</td>
+                <td>{{ unit.order_item.order.customer.name }}</td>
+                <td>{{ unit.order_item.order.user.get_full_name|default:unit.order_item.order.user.username }}</td>
+                <td>{{ unit.order_item.note }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <p style="text-align:center;">موردی یافت نشد.</p>
+    {% endif %}
+
+    <!-- jQuery + fdatepicker -->
+    <script src="{% static 'selvi/js/jquery-3.6.4.min.js' %}"></script>
+    <script src="{% static 'selvi/js/fdatepicker.min.js' %}"></script>
+    <script>
+        $(document).ready(function() {
+            fdatepicker.init({
+                selector: '#datepicker',
+                format: 'YYYY-MM-DD',
+                autoClose: true,
+                todayBtn: true
+            });
+        });
+    </script>
+</body>
+</html>

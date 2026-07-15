@@ -1,0 +1,23 @@
+{% extends 'base.html' %}
+{% block content %}
+<div class="container py-5">
+    <div class="row justify-content-center">
+        <div class="col-md-6">
+            <div class="card shadow">
+                <div class="card-body">
+                    <h4 class="card-title text-center mb-4">ایجاد سفارش جدید</h4>
+                    <form method="post">
+                        {% csrf_token %}
+                        <div class="mb-3">{{ form.customer.label_tag }}</div>
+                        <div class="mb-3">{{ form.customer }}</div>
+                        <div class="d-grid gap-2 d-md-flex justify-content-md-end">
+                            <a href="{% url 'order_list' %}" class="btn btn-secondary me-md-2">انصراف</a>
+                            <button type="submit" class="btn btn-primary">ادامه</button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

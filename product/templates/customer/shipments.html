@@ -1,0 +1,107 @@
+{% extends 'base_shop.html' %}
+{% load static %}
+{% load product_filters %}
+
+{% block title %}ارسال‌های من{% endblock %}
+
+{% block extra_css %}
+<style>
+    .shipment-card {
+        background: #fff;
+        border-radius: 16px;
+        box-shadow: 0 4px 20px rgba(0,0,0,0.06);
+        padding: 1.25rem 1.5rem;
+        margin-bottom: 1.25rem;
+        transition: all 0.2s ease;
+        cursor: pointer;
+        border-right: 5px solid #0d6efd;
+    }
+    .shipment-card:hover {
+        box-shadow: 0 8px 30px rgba(0,0,0,0.10);
+        transform: translateY(-2px);
+    }
+    .shipment-card .badge-date {
+        background: #e9ecef;
+        color: #495057;
+        font-size: 0.85rem;
+        padding: 0.3rem 0.8rem;
+        border-radius: 30px;
+    }
+    .shipment-card .badge-plate {
+        background: #0d6efd;
+        color: #fff;
+        font-size: 0.95rem;
+        padding: 0.3rem 1rem;
+        border-radius: 30px;
+        font-weight: 600;
+    }
+    .shipment-card .items-count {
+        font-size: 0.9rem;
+        color: #6c757d;
+    }
+    .shipment-card .total-price {
+        font-size: 1.1rem;
+        font-weight: 700;
+        color: #198754;
+    }
+    .shipment-card .arrow-icon {
+        font-size: 1.4rem;
+        color: #adb5bd;
+        transition: 0.2s;
+    }
+    .shipment-card:hover .arrow-icon {
+        color: #0d6efd;
+        transform: translateX(-4px);
+    }
+    .empty-state {
+        text-align: center;
+        padding: 3rem 0;
+    }
+    .empty-state i {
+        font-size: 4rem;
+        color: #dee2e6;
+        margin-bottom: 1rem;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container py-4">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h2 class="mb-0">
+            <i class="bi bi-truck me-2"></i>ارسال‌ها
+        </h2>
+        <a href="{% url 'customer_order_list' %}" class="btn btn-outline-secondary">
+            <i class="bi bi-arrow-right"></i> بازگشت
+        </a>
+    </div>
+
+    {% if shipment_groups %}
+        {% for group in shipment_groups %}
+        <div class="shipment-card" 
+             onclick="window.location.href='{% url 'customer_shipment_detail' group.plate group.date|date:"Y-m-d" %}'">
+            <div class="d-flex flex-wrap align-items-center justify-content-between">
+                <div class="d-flex align-items-center gap-3 flex-wrap">
+                    <span class="badge-plate">
+                        <i class="bi bi-truck-front me-1"></i> {{ group.plate }}
+                    </span>
+                    <span class="badge-date">
+                        <i class="bi bi-calendar3 me-1"></i> {{ group.date|persian_date }}
+                    </span>
+                    <span class="items-count">
+                        <i class="bi bi-boxes me-1"></i> {{ group.units|length }} قلم کالا
+                    </span>
+                </div>
+
+            </div>
+        </div>
+        {% endfor %}
+    {% else %}
+        <div class="empty-state">
+            <i class="bi bi-inbox"></i>
+            <h5 class="text-muted">هنوز هیچ ارسالی برای شما ثبت نشده است.</h5>
+            <p class="text-muted small">پس از تکمیل تولید و بسته‌بندی، ارسال‌های شما در این بخش نمایش داده می‌شوند.</p>
+        </div>
+    {% endif %}
+</div>
+{% endblock %}

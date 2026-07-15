@@ -1,0 +1,187 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block extra_css %}
+<style>
+    .color-row { margin-bottom: 10px; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container py-4">
+    <div class="row">
+        <div class="col-md-8">
+            <div class="card shadow mb-4">
+                <div class="card-header bg-success text-white">
+                    <h5>افزودن آیتم به سفارش #{{ order.id }} (مشتری: {{ order.customer.name }})</h5>
+                </div>
+                <div class="card-body">
+                    <form method="post" id="item-form">
+                        {% csrf_token %}
+                        <!-- ردیف دسته و محصول -->
+                        <div class="row mb-3">
+                            <div class="col-md-6">
+                                <label class="form-label">{{ item_form.category.label }}</label>
+                                {{ item_form.category }}
+                            </div>
+                            <div class="col-md-6">
+                                <label class="form-label">{{ item_form.product.label }}</label>
+                                {{ item_form.product }}
+                            </div>
+                        </div>
+                        <!-- ردیف تعداد و اندازه -->
+                        <div class="row mb-3">
+                            <div class="col-md-4">
+                                <label class="form-label">{{ item_form.quantity.label }}</label>
+                                {{ item_form.quantity }}
+                            </div>
+                            <div class="col-md-4">
+                                <label class="form-label">{{ item_form.size.label }}</label>
+                                {{ item_form.size }}
+                            </div>
+                            <div class="col-md-4">
+                                <!-- خالی برای تراز -->
+                            </div>
+                        </div>
+                        <!-- توضیحات -->
+                        <div class="mb-3">
+                            <label class="form-label">{{ item_form.notes.label }}</label>
+                            {{ item_form.notes }}
+                        </div>
+                        <!-- رنگ‌ها -->
+                        <h6 class="mt-4">انتخاب رنگ قطعات</h6>
+                        <div class="row">
+                            {% for field in color_form %}
+                                <div class="col-md-4 mb-2 color-field" data-part="{{ field.name|slice:'6:' }}">
+                                    <label class="form-label">{{ field.label }}</label>
+                                    {{ field }}
+                                </div>
+                            {% endfor %}
+                        </div>
+
+                        <div class="mt-4 d-flex gap-2">
+                            <button type="submit" name="add_another" class="btn btn-primary">ذخیره و افزودن آیتم دیگر</button>
+                            <button type="submit" name="finish" class="btn btn-success">ذخیره و پایان</button>
+                            <a href="{% url 'order_list' %}" class="btn btn-secondary">انصراف</a>
+                        </div>  
+                    </form>
+                </div>
+            </div>
+        </div>
+
+        <!-- ستون سمت چپ: نمایش آیتم‌های قبلی -->
+        <div class="col-md-4">
+            <div class="card shadow">
+                <div class="card-header bg-info text-white">
+                    <h6>آیتم‌های ثبت شده</h6>
+                </div>
+                <div class="card-body p-0">
+                    <ul class="list-group list-group-flush">
+                        {% for item in existing_items %}
+                            <li class="list-group-item">
+                                <strong>{{ item.product.name }}</strong> ({{ item.quantity }} عدد)
+                                <br><small class="text-muted">رنگ: {{ item.color_summary }}</small>
+                            </li>
+                        {% empty %}
+                            <li class="list-group-item text-center text-muted">هنوز آیتمی اضافه نشده است.</li>
+                        {% endfor %}
+                    </ul>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+    
+{% block extra_js %}
+<script>
+$(document).ready(function() {
+    // ----- بارگذاری محصولات بر اساس دسته (بدون تغییر) -----
+    $('#id_category').change(function() {
+        var categoryId = $(this).val();
+        if (categoryId) {
+            $.ajax({
+                url: "{% url 'ajax_load_products' %}",
+                data: { 'category': categoryId },
+                success: function(data) {
+                    var $productSelect = $('#id_product');
+                    $productSelect.empty();
+                    $productSelect.append($('<option>', { value: '', text: '---------' }));
+                    $.each(data, function(i, product) {
+                        $productSelect.append($('<option>', {
+                            value: product.id,
+                            text: product.name
+                        }));
+                    });
+                    // پس از بارگذاری محصولات، رنگ‌ها را ریست کن
+                    resetColorFields();
+                }
+            });
+        } else {
+            $('#id_product').empty().append($('<option>', { value: '', text: '---------' }));
+            resetColorFields();
+        }
+    });
+
+    // ----- بارگذاری رنگ‌های محصول هنگام تغییر محصول -----
+    $('#id_product').on('change', function() {
+        var productId = $(this).val();
+        if (productId) {
+            fetch(`/ajax/load-product-colors/${productId}/`)
+                .then(response => response.json())
+                .then(data => {
+                    updateColorFields(data.defaults);
+                });
+        } else {
+            resetColorFields();
+        }
+    });
+
+    // ----- مقداردهی اولیه رنگ‌ها در صورت وجود محصول انتخاب‌شده -----
+    var initialProduct = $('#id_product').val();
+    if (initialProduct) {
+        fetch(`/ajax/load-product-colors/${initialProduct}/`)
+            .then(response => response.json())
+            .then(data => {
+                updateColorFields(data.defaults);
+            });
+    }
+
+    // ----- توابع کمکی -----
+    function updateColorFields(defaults) {
+        const allowedParts = Object.keys(defaults);
+        document.querySelectorAll('.color-field').forEach(function(el) {
+            const part = el.getAttribute('data-part');
+            if (allowedParts.includes(part)) {
+                el.style.display = '';   // نمایش
+                const select = el.querySelector('select');
+                if (select && defaults[part]) {
+                    select.value = defaults[part];
+                } else if (select) {
+                    select.value = '';
+                }
+            } else {
+                el.style.display = 'none'; // مخفی‌سازی
+                const select = el.querySelector('select');
+                if (select) select.value = '';
+            }
+        });
+    }
+
+    function resetColorFields() {
+        document.querySelectorAll('.color-field').forEach(function(el) {
+            el.style.display = ''; // همه را نمایش بده (یا بسته به نیاز)
+            const select = el.querySelector('select');
+            if (select) select.value = '';
+        });
+    }
+
+    // اگر دسته از قبل انتخاب شده بود، لیست محصولات را بارگذاری کن
+    var initialCategory = $('#id_category').val();
+    if (initialCategory) {
+        $('#id_category').trigger('change');
+    }
+});
+</script>
+{% endblock %}

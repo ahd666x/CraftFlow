@@ -1,0 +1,152 @@
+{% extends 'base.html' %}
+{% block content %}
+<div class="container mt-5 text-center">
+    <h3>واحد بسته‌بندی #{{ unit.id }}</h3>
+    <p>آیتم: {{ unit.order_item.product.name }} (سفارش {{ unit.order_item.order.id }})</p>
+    <p>شماره واحد: {{ unit.unit_number }} از {{ unit.order_item.quantity }}</p>
+
+    {% if can_pack and not unit.is_packed %}
+        <form method="post">
+            {% csrf_token %}
+            <input type="hidden" name="next" value="{{ next_url }}">
+            <button class="btn btn-primary btn-lg">📦 تأیید بسته‌بندی</button>
+        </form>
+    {% endif %}
+
+    {% if can_ship and not unit.is_shipped %}
+        <form method="post" id="ship-form">
+            {% csrf_token %}
+            <input type="hidden" name="next" value="{{ next_url }}">
+            <div class="mb-3">
+                <label class="form-label">پلاک خودرو</label>
+                <div class="plate-input-wrapper">
+                    <div class="plate-container">
+                        {% comment %} <span class="plate-label">ایران</span> {% endcomment %}
+                        <div class="plate-number">
+                            <input type="text" name="plate_part1" class="plate-part" maxlength="2" placeholder="۱۲" required>
+                            <input type="text" class="plate-letter-input" maxlength="1" placeholder="ب" required>
+                            <input type="text" name="plate_part2" class="plate-part" maxlength="3" placeholder="۳۴۵" required>
+                            <span class="plate-separator">-</span>
+                            <input type="text" name="plate_part3" class="plate-part" maxlength="2" placeholder="۶۷" required>
+                        </div>
+                    </div>
+                </div>
+                <input type="hidden" name="plate" id="full-plate">
+            </div>
+            <button class="btn btn-warning btn-lg" type="submit">🚚 تأیید ارسال</button>
+        </form>
+    {% endif %}
+
+    {% if not can_pack and not can_ship %}
+        <div class="alert alert-info">
+            {% if unit.is_packed %}✅ قبلاً بسته‌بندی شده.{% endif %}
+            {% if unit.is_shipped %}✅ قبلاً ارسال شده.{% endif %}
+        </div>
+    {% endif %}
+
+    {% if unit.is_packed and request.user == unit.packed_by or request.user.is_superuser %}
+        <form method="post" action="{% url 'undo_packaging_unit' unit.id %}?next={{ next_url }}" class="mt-2">
+            {% csrf_token %}
+            <button type="submit" class="btn btn-sm btn-outline-danger">↩️ لغو بسته‌بندی</button>
+        </form>
+    {% endif %}
+
+    {% if unit.is_shipped and request.user == unit.shipped_by or request.user.is_superuser %}
+        <form method="post" action="{% url 'undo_packaging_unit' unit.id %}?next={{ next_url }}" class="mt-2">
+            {% csrf_token %}
+            <button type="submit" class="btn btn-sm btn-outline-danger">↩️ لغو ارسال</button>
+        </form>
+    {% endif %}
+</div>
+
+<style>
+    .plate-input-wrapper {
+        direction: ltr;
+        display: flex;
+        justify-content: center;
+        margin-bottom: 1rem;
+    }
+    .plate-container {
+        background: #003399;
+        border: 3px solid #000;
+        border-radius: 10px;
+        padding: 0.5rem 1rem;
+        display: inline-block;
+        box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+    }
+    .plate-label {
+        color: white;
+        font-size: 0.8rem;
+        text-align: center;
+        display: block;
+        font-weight: bold;
+        letter-spacing: 2px;
+        margin-bottom: 2px;
+    }
+    .plate-number {
+        display: flex;
+        align-items: center;
+        gap: 2px;
+        background: white;
+        border-radius: 4px;
+        padding: 2px 4px;
+    }
+    .plate-part {
+        width: 40px;
+        border: none;
+        background: transparent;
+        text-align: center;
+        font-size: 1.2rem;
+        font-weight: bold;
+        color: #000;
+        font-family: 'Arial', 'Tahoma', sans-serif;
+        outline: none;
+        padding: 0;
+    }
+    .plate-letter-input {
+        width: 30px;
+        border: none;
+        background: transparent;
+        text-align: center;
+        font-size: 1.2rem;
+        font-weight: bold;
+        color: #000;
+        font-family: 'Arial', 'Tahoma', sans-serif;
+        outline: none;
+        padding: 0;
+    }
+    .plate-separator {
+        font-size: 1.2rem;
+        font-weight: bold;
+        color: #000;
+        margin: 0 2px;
+    }
+</style>
+
+<script>
+    const shipForm = document.getElementById('ship-form');
+    if (shipForm) {
+        shipForm.addEventListener('submit', function(e) {
+            const p1 = this.querySelector('input[name="plate_part1"]').value;
+            const letter = this.querySelector('.plate-letter-input').value;
+            const p2 = this.querySelector('input[name="plate_part2"]').value;
+            const p3 = this.querySelector('input[name="plate_part3"]').value;
+            const fullPlate = p1 + letter + p2 + '-' + p3;
+            document.getElementById('full-plate').value = fullPlate;
+        });
+
+        const savedPlate = "{{ saved_plate }}";
+        if (savedPlate && savedPlate !== 'نامشخص' && savedPlate !== '') {
+            const parts = savedPlate.match(/^(\d+)(\D?)(\d+)-(\d+)$/);
+            if (parts) {
+                shipForm.querySelector('input[name="plate_part1"]').value = parts[1];
+                shipForm.querySelector('.plate-letter-input').value = parts[2] || '';
+                shipForm.querySelector('input[name="plate_part2"]').value = parts[3];
+                shipForm.querySelector('input[name="plate_part3"]').value = parts[4];
+            } else {
+                shipForm.querySelector('input[name="plate_part1"]').value = savedPlate;
+            }
+        }
+    }
+</script>
+{% endblock %}

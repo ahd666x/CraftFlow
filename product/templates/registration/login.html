@@ -1,0 +1,129 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ورود به سلوی چوب</title>
+
+    <!-- Bootstrap RTL CSS (محلی) -->
+    <link rel="stylesheet" href="{% static 'selvi/css/bootstrap.rtl.min.css' %}">
+    
+    <!-- Bootstrap Icons CSS (محلی) -->
+    <link rel="stylesheet" href="{% static 'selvi/css/bootstrap-icons.css' %}">
+
+    <style>
+        body {
+            background: #f0f2f5;
+            font-family: 'Vazir', Tahoma, sans-serif;
+            direction: rtl;
+        }
+        .login-card {
+            max-width: 400px;
+            margin: 80px auto;
+            border-radius: 20px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.1);
+        }
+        .card-header {
+            background: #2c3e50;
+            color: white;
+            border-radius: 20px 20px 0 0 !important;
+            padding: 25px 20px;
+            text-align: center;
+        }
+        .btn-login {
+            background: #27ae60;
+            color: white;
+            font-weight: bold;
+            padding: 12px;
+            border-radius: 10px;
+        }
+        .btn-login:hover {
+            background: #219a52;
+            color: white;
+        }
+        .form-control {
+            border-radius: 10px;
+            padding: 12px;
+            border: 1px solid #ddd;
+        }
+        .form-control:focus {
+            border-color: #27ae60;
+            box-shadow: 0 0 0 0.2rem rgba(39, 174, 96, 0.25);
+        }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <div class="card login-card">
+        <div class="card-header">
+            <i class="bi bi-box-seam" style="font-size: 2.5rem;"></i>
+            <h3 class="mt-2 mb-0">ورود به سلوی چوب</h3>
+            <!-- <p class="mb-0 mt-2 opacity-75">پنل مدیریت تولید و فروش</p> -->
+        </div>
+        <div class="card-body p-4">
+            {% if form.errors %}
+                <div class="alert alert-danger">
+                    <i class="bi bi-exclamation-triangle-fill"></i>
+                    نام کاربری یا رمز عبور اشتباه است.
+                </div>
+            {% endif %}
+
+            {% if next %}
+                {% if user.is_authenticated %}
+                    <div class="alert alert-warning">
+                        شما دسترسی به این صفحه را ندارید. با حساب کاربری مجاز وارد شوید.
+                    </div>
+                {% else %}
+                    <div class="alert alert-info">
+                        برای مشاهده این صفحه لطفاً وارد شوید.
+                    </div>
+                {% endif %}
+            {% endif %}
+
+            <form method="post" action="{% url 'login' %}">
+                {% csrf_token %}
+                <input type="hidden" name="next" value="{{ next }}">
+
+                <div class="mb-3">
+                    <label for="id_username" class="form-label fw-bold">نام کاربری</label>
+                    <div class="input-group">
+                        <span class="input-group-text bg-light border-0"><i class="bi bi-person"></i></span>
+                        <input type="text" name="username" id="id_username" class="form-control" placeholder="نام کاربری" autofocus required>
+                    </div>
+                </div>
+
+                <div class="mb-4">
+                    <label for="id_password" class="form-label fw-bold">رمز عبور</label>
+                    <div class="input-group">
+                        <span class="input-group-text bg-light border-0"><i class="bi bi-lock"></i></span>
+                        <input type="password" name="password" id="id_password" class="form-control" placeholder="رمز عبور" required>
+                    </div>
+                </div>
+
+                <button type="submit" class="btn btn-login w-100">
+                    <i class="bi bi-box-arrow-in-left"></i> ورود
+                </button>
+            </form>
+
+            <hr class="my-4">
+
+            <div class="text-center">
+                <a href="{% url 'customer_order_list' %}" class="text-decoration-none">
+                    <i class="bi bi-shop"></i> بازگشت به فروشگاه
+                </a>
+            </div>
+        </div>
+        <div class="card-footer text-center text-muted py-3">
+        </div>
+    </div>
+</div>
+
+<!-- Bootstrap JS Bundle (محلی) -->
+<script src="{% static 'selvi/js/bootstrap.bundle.min.js' %}"></script>
+
+</body>
+</html>
+
+

@@ -1,0 +1,189 @@
+{% extends 'base.html' %}
+{% load static %}
+{% load product_filters %}
+
+{% block title %}جزئیات سفارش #{{ order.id }}{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4">
+    <!-- کارت اطلاعات سفارش -->
+    <div class="card shadow-lg border-0 mb-4">
+        <div class="card-header bg-gradient-primary text-white py-3">
+            <div class="d-flex justify-content-between align-items-center">
+                <h3 class="mb-0">
+                    <i class="bi bi-file-text me-2"></i>
+                    جزئیات سفارش #{{ order.id }}
+                </h3>
+                <div>
+                    <a href="{% url 'order_combined_print' order.id %}" class="btn btn-light btn-lg me-2" target="_blank">
+                        <i class="bi bi-printer"></i> چاپ همهٔ برگه‌ها
+                    </a>
+                    <a href="{% url 'order_print' order.id %}" class="btn btn-light btn-lg me-2" target="_blank">
+                        <i class="bi bi-printer-fill me-2"></i>چاپ فرم سفارش
+                    </a>
+                    <a href="{% url 'order_list' %}" class="btn btn-outline-light btn-lg">
+                        <i class="bi bi-arrow-right me-2"></i>بازگشت به لیست
+                    </a>
+                </div>
+            </div>
+        </div>
+        <div class="card-body p-4">
+            <div class="row g-4">
+                <div class="col-md-3">
+                    <div class="info-box bg-light p-3 rounded-3 text-center">
+                        <i class="bi bi-person-circle fs-1 text-primary"></i>
+                        <h6 class="mt-2">نماینده</h6>
+                        <p class="fs-5 fw-bold mb-0">{{ order.customer.user }}</p>
+                    </div>
+                </div>
+                <div class="col-md-3">
+                    <div class="info-box bg-light p-3 rounded-3 text-center">
+                        <i class="bi bi-box-seam fs-1 text-success"></i>
+                        <h6 class="mt-2">مشتری</h6>
+                        <p class="fs-5 fw-bold mb-0">{{ order.customer.name }}</p>
+                    </div>
+                </div>
+                <div class="col-md-3">
+                    <div class="info-box bg-light p-3 rounded-3 text-center">
+                        <i class="bi bi-calendar3 fs-1 text-info"></i>
+                        <h6 class="mt-2">تاریخ</h6>
+                        <p class="fs-5 fw-bold mb-0">{{ order.created_at }}</p>
+                    </div>
+                </div>
+                <div class="col-md-3">
+                    <div class="info-box bg-light p-3 rounded-3 text-center">
+                        <i class="bi bi-flag fs-1 text-warning"></i>
+                        <h6 class="mt-2">وضعیت</h6>
+                        <span class="badge fs-6 px-4 py-2 
+                            {% if order.status == 'draft' %}bg-secondary
+                            {% elif order.status == 'planned' %}bg-info
+                            {% elif order.status == 'producing' %}bg-warning text-dark
+                            {% else %}bg-success{% endif %}">
+                            {{ order.get_status_display }}
+                        </span>
+                    </div>
+                </div>
+                <!-- <div class="col-md-3">
+                    <div class="info-box bg-light p-3 rounded-3 text-center">
+                        <i class="bi bi-box-seam fs-1 text-success"></i>
+                        <h6 class="mt-2">تعداد</h6>
+                        <p class="fs-5 fw-bold mb-0">{{ order.items.count }}</p>
+                    </div>
+                </div> -->
+            </div>
+        </div>
+    </div>
+
+    <!-- کارت لیست آیتم‌ها -->
+    <div class="card shadow-lg border-0">
+        <div class="card-header bg-dark text-white py-3 d-flex justify-content-between align-items-center">
+            <h4 class="mb-0"><i class="bi bi-list-ul me-2"></i>آیتم‌های سفارش</h4>
+            <a href="{% url 'create_order_step2' order.id %}" class="btn btn-success btn-lg">
+                <i class="bi bi-plus-circle me-2"></i>افزودن آیتم جدید
+            </a>
+        </div>
+        <div class="card-body p-0">
+            <div class="table-responsive">
+                <table class="table table-hover align-middle mb-0">
+                    <thead class="table-light">
+                        <tr>
+                            <th width="5%">#</th>
+                            <th width="10%">دسته</th>
+                            <th width="15%">محصول</th>
+                            <th width="5%">تعداد</th>
+                            <th width="8%">اندازه</th>
+                            <th width="10%">رنگ</th>
+                            <th width="15%">توضیحات</th>
+                            {% for code, name in station_choices %}
+                                <th class="text-center" width="5%">{{ name }}</th>
+                            {% endfor %}
+                            <th width="12%">عملیات</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for item in order.items.all %}
+                        <tr>
+                            <td>
+                                <a href="{% url 'item_detail' item.id %}" class="btn btn-outline-primary btn-sm">{{ forloop.counter }}</a>
+                            </td>
+
+                            <td>{{ item.product.category.name }}</td>
+                            <td>{{ item.product.name }}</td>
+                            <td><span class="badge bg-secondary fs-6">{{ item.quantity }}</span></td>
+                            <td>{{ item.size|default:"-" }}</td>
+                            <td>{{ item.color_summary }}</td>
+                            <td><small>{{ item.notes|default:"-" }}</small></td>
+                            {% for code, name in station_choices %}
+                                <td class="text-center fs-5">
+                                    {% if item.stages|get_item:code %}
+                                        <span class="text-success">✅</span>
+                                    {% else %}
+                                        <span class="text-warning">⏳</span>
+                                    {% endif %}
+                                </td>
+                            {% endfor %}
+                            <td>
+                                <div class="d-flex flex-wrap gap-1">
+
+                                    
+                                    <a href="{% url 'print_sheet' item.id %}" class="btn btn-outline-primary btn-sm" target="_blank" title="چاپ فرم تولید">
+                                        <i class="bi bi-file-earmark-text"></i> فرم
+                                    </a>
+                                    <a href="{% url 'print_lable' item.id %}" class="btn btn-outline-success btn-sm" target="_blank" title="چاپ لیبل بسته‌بندی">
+                                        <i class="bi bi-tag"></i> لیبل
+                                    </a>
+                                    <!-- <a href="{% url 'item_detail' item.id %}" class="btn btn-outline-info btn-sm" title="مشاهده جزئیات آیتم">
+                                        <i class="bi bi-eye"></i>
+                                    </a> -->
+                                    <!-- <a href="{% url 'export_autocut_xml' order.id %}" class="btn btn-outline-secondary btn-sm" target="_blank">
+                                        <i class="bi bi-file-earmark-arrow-down"></i> خروجی AutoCUT
+                                    </a> -->
+
+
+
+                                </div>
+                            </td>
+                        </tr>
+                        {% empty %}
+                        <tr>
+                            <td colspan="{{ 7|add:station_choices|length|add:1 }}" class="text-center py-5 text-muted">
+                                <i class="bi bi-inbox fs-1 mb-3 d-block"></i>
+                                هنوز آیتمی برای این سفارش ثبت نشده است.
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        <div class="card-footer bg-light p-3">
+            <div class="d-flex justify-content-between align-items-center">
+                <span class="text-muted"><i class="bi bi-info-circle me-1"></i> برای چاپ فرم تولید یا لیبل هر آیتم از دکمه‌های مربوطه استفاده کنید.</span>
+                <a href="{% url 'create_order_step2' order.id %}" class="btn btn-success">
+                    <i class="bi bi-plus-circle me-2"></i>افزودن آیتم
+                </a>
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+    .bg-gradient-primary {
+        background: linear-gradient(135deg, #4e73df 0%, #224abe 100%);
+    }
+    .info-box {
+        transition: transform 0.2s;
+    }
+    .info-box:hover {
+        transform: translateY(-5px);
+        box-shadow: 0 0.5rem 1rem rgba(0,0,0,0.1);
+    }
+    .table th, .table td {
+        vertical-align: middle;
+    }
+    .btn-lg {
+        padding: 0.75rem 1.5rem;
+        font-size: 1.1rem;
+    }
+</style>
+{% endblock %}

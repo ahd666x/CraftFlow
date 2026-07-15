@@ -1,0 +1,197 @@
+{% extends 'base.html' %}
+{% load static %}
+{% load product_filters %}
+
+{% block title %}جزئیات آیتم #{{ item.id }}{% endblock %}
+
+{% block extra_css %}
+<style>
+    .status-done { background-color: #d4edda; color: #155724; }
+    .status-pending { background-color: #fff3cd; color: #856404; }
+    .status-waiting { background-color: #f8d7da; color: #721c24; }
+    .status-none { background-color: #e2e3e5; color: #383d41; }
+    .part-table th, .part-table td { vertical-align: middle; text-align: center; }
+    .part-table th { background-color: #f8f9fa; }
+</style>
+{% endblock %}
+
+{% block content %}
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+<meta http-equiv="Pragma" content="no-cache">
+<meta http-equiv="Expires" content="0">
+<div class="container py-4">
+    <!-- کارت اطلاعات آیتم (مانند قبل) -->
+    <div class="row mb-4">
+        <div class="col-12">
+            <div class="card shadow-sm border-0">
+                <div class="card-header bg-primary text-white">
+                    <h5 class="mb-0"><i class="bi bi-info-circle me-2"></i>اطلاعات آیتم #{{ item.id }}</h5>
+                </div>
+                <div class="card-body">
+                    <div class="row">
+                        <div class="col-md-3"><strong>سفارش:</strong> {{ item.order.id }}</div>
+                        <div class="col-md-3"><strong>محصول:</strong> {{ item.product.name }}</div>
+                        <div class="col-md-2"><strong>تعداد:</strong> {{ item.quantity }}</div>
+                        <div class="col-md-2"><strong>اندازه:</strong> {{ item.size|default:"-" }}</div>
+                        <div class="col-md-2"><strong>رنگ:</strong> {{ item.color_summary }}</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="row">
+        <div class="col-lg-5">
+            <!-- وضعیت کلی مراحل (کارت) -->
+            <div class="card shadow-sm border-0 mb-4">
+                <div class="card-header bg-success text-white">
+                    <h5 class="mb-0"><i class="bi bi-diagram-3 me-2"></i>پیشرفت کلی</h5>
+                </div>
+                <div class="list-group list-group-flush">
+                    {% for choice, status in station_choices|zip_lists:stage_status_list %}
+                    <div class="list-group-item d-flex align-items-center py-2">
+                        <div class="me-3">
+                            {% if status %}
+                                <i class="bi bi-check-circle-fill text-success fs-5"></i>
+                            {% else %}
+                                <i class="bi bi-hourglass-split text-warning fs-5"></i>
+                            {% endif %}
+                        </div>
+                        <div class="flex-grow-1 d-flex justify-content-between">
+                            <span>{{ choice.1 }}</span>
+                            {% if status %}
+                                <span class="badge bg-success">{{ status }}</span>
+                            {% else %}
+                                <span class="badge bg-secondary">در انتظار</span>
+                            {% endif %}
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+            <!-- بعد از کارت QR و دکمه‌ها -->
+            <div class="card shadow-sm border-0 mt-4">
+                <div class="card-header bg-warning text-dark">
+                    <h5 class="mb-0"><i class="bi bi-box-seam me-2"></i>وضعیت بسته‌بندی</h5>
+                </div>
+                <div class="card-body">
+                    {% with packed=item.packaging_progress.0 total=item.packaging_progress.1 %}
+                        <div class="d-flex justify-content-between align-items-center">
+                            <span>بسته‌بندی شده: <strong>{{ packed }} از {{ total }}</strong></span>
+                            {% if item.is_fully_packed %}
+                                <span class="badge bg-success fs-6">✅ کامل شد</span>
+                            {% else %}
+                                <span class="badge bg-warning text-dark fs-6">⏳ در حال بسته‌بندی</span>
+                            {% endif %}
+                        </div>
+                        <div class="progress mt-2" style="height: 10px;">
+                            <div class="progress-bar bg-success" role="progressbar" 
+                                style="width: {% widthratio packed total 100 %}%;" 
+                                aria-valuenow="{{ packed }}" aria-valuemin="0" aria-valuemax="{{ total }}"></div>
+                        </div>
+                    {% endwith %}
+                </div>
+            </div>
+            <!-- کارت وضعیت ارسال -->
+            <div class="card shadow-sm border-0 mt-4">
+                <div class="card-header bg-info text-white">
+                    <h5 class="mb-0"><i class="bi bi-truck me-2"></i>وضعیت ارسال</h5>
+                </div>
+                <div class="card-body">
+                    {% with shipped=item.shipping_progress.0 total=item.shipping_progress.1 %}
+                        <div class="d-flex justify-content-between align-items-center">
+                            <span>ارسال شده: <strong>{{ shipped }} از {{ total }}</strong></span>
+                            {% if item.is_fully_shipped %}
+                                <span class="badge bg-success fs-6">✅ کامل شد</span>
+                            {% else %}
+                                <span class="badge bg-warning text-dark fs-6">⏳ در حال ارسال</span>
+                            {% endif %}
+                        </div>
+                        <div class="progress mt-2" style="height: 10px;">
+                            <div class="progress-bar bg-info" role="progressbar" 
+                                style="width: {% widthratio shipped total 100 %}%;" 
+                                aria-valuenow="{{ shipped }}" aria-valuemin="0" aria-valuemax="{{ total }}"></div>
+                        </div>
+                    {% endwith %}
+                </div>
+            </div>
+            <!-- QR و دکمه‌ها -->
+            <div class="card shadow-sm border-0">
+                <div class="card-body text-center">
+                    <!-- {% if item.qr_code %}
+                        <img src="{{ item.qr_code.url }}" class="img-fluid mb-3" style="max-width: 180px;">
+                    {% endif %} -->
+                    <div class="d-grid gap-2">
+                        <a href="{% url 'print_sheet' item.id %}" class="btn btn-outline-primary" target="_blank">
+                            <i class="bi bi-file-text"></i> چاپ فرم تولید
+                        </a>
+                        <a href="{% url 'print_lable' item.id %}" class="btn btn-outline-success" target="_blank">
+                            <i class="bi bi-tag"></i> چاپ لیبل
+                        </a>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-lg-7">
+            <!-- جدول قطعات و وضعیت در ایستگاه‌ها -->
+            <div class="card shadow-sm border-0">
+                <div class="card-header bg-info text-white">
+                    <h5 class="mb-0"><i class="bi bi-grid-3x3-gap-fill me-2"></i>قطعات تشکیل‌دهنده</h5>
+                </div>
+                <div class="card-body p-0">
+                    <div class="table-responsive">
+                        <table class="table table-bordered part-table mb-0">
+                            <thead>
+                                <tr>
+                                    <th>نام قطعه</th>
+                                    <th>بارکد</th>
+                                    <th>تعداد</th>
+                                    {% for code, name in station_choices %}
+                                        <th>{{ name }}</th>
+                                    {% endfor %}
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for bom in bom_parts %}
+                                <tr>
+                                    <td class="text-start">{{ bom.part.name }}</td>
+                                    <td><code>{{ bom.part.f3 }}</code></td>
+                                    <td>{{ bom.quantity }}</td>
+                                    {% for code, name in station_choices %}
+                                        {% with status=bom.station_status|get_item:code %}
+                                        <td class="
+                                            {% if status == 'done' %}status-done
+                                            {% elif status == 'pending' %}status-pending
+                                            {% elif status == 'waiting' %}status-waiting
+                                            {% else %}status-none{% endif %}
+                                        ">
+                                            {% if status == 'done' %}
+                                                ✅
+                                            {% elif status == 'pending' %}
+                                                ⏳ آماده
+                                            {% elif status == 'waiting' %}
+                                                ⏸️ منتظر
+                                            {% else %}
+                                                -
+                                            {% endif %}
+                                        </td>
+                                        {% endwith %}
+                                    {% endfor %}
+                                </tr>
+                                {% empty %}
+                                <tr><td colspan="{{ station_choices|length|add:3 }}" class="text-center py-3">قطعه‌ای تعریف نشده است.</td></tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+                <div class="card-footer small text-muted">
+                    <i class="bi bi-info-circle"></i> 
+                    ✅ انجام شده | ⏳ آماده انجام | ⏸️ منتظر مرحله قبل |
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

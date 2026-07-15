@@ -1,0 +1,129 @@
+{% extends 'base.html' %}
+{% block content %}
+<div class="container py-5">
+    <div class="row justify-content-center">
+        <div class="col-lg-10">
+            <div class="card shadow-lg border-0">
+                <div class="card-header bg-gradient-primary text-white p-4">
+                    <h3 class="mb-0">
+                        <i class="fas fa-plus-circle me-3"></i>
+                        ثبت سفارش جدید
+                    </h3>
+                </div>
+                
+                <div class="card-body p-5">
+                    <form method="post">
+                        {% csrf_token %}
+                        
+                        <!-- اطلاعات پایه -->
+                        <div class="row mb-4">
+                            <div class="col-md-6">
+                                <label class="form-label fw-bold text-dark mb-2">
+                                    <i class="fas fa-user text-primary me-2"></i>
+                                    {{ form.customer_name.label }}
+                                </label>
+                                {{ form.customer_name }}
+                            </div>
+                            <div class="col-md-6">
+                                <label class="form-label fw-bold text-dark mb-2">
+                                    <i class="fas fa-hashtag text-success me-2"></i>
+                                    {{ form.quantity.label }}
+                                </label>
+                                {{ form.quantity }}
+                            </div>
+                        </div>
+                        
+                        <!-- محصول -->
+                        <div class="row mb-4">
+                            <div class="col-md-4">
+                                <label class="form-label fw-bold text-dark mb-2">
+                                    <i class="fas fa-tag text-info me-2"></i>
+                                    {{ form.category_name.label }}
+                                </label>
+                                {{ form.category_name }}
+                            </div>
+                            <div class="col-md-5">
+                                <label class="form-label fw-bold text-dark mb-2">
+                                    <i class="fas fa-box text-warning me-2"></i>
+                                    {{ form.product_name.label }}
+                                </label>
+                                {{ form.product_name }}
+                            </div>
+                            <div class="col-md-3">
+                                <label class="form-label fw-bold text-dark mb-2">
+                                    <i class="fas fa-ruler-combined text-danger me-2"></i>
+                                    {{ form.size.label }}
+                                </label>
+                                {{ form.size }}
+                            </div>
+                        </div>
+                        
+                        <!-- رنگ‌ها -->
+                        <div class="row mb-4">
+                            <div class="col-md-3">
+                                <label class="form-label fw-bold text-dark mb-2">
+                                    <i class="fas fa-palette text-purple me-2"></i>
+                                    {{ form.rang_bazne.label }}
+                                </label>
+                                {{ form.rang_bazne }}
+                            </div>
+                            <div class="col-md-3">
+                                <label class="form-label fw-bold text-dark mb-2">
+                                    <i class="fas fa-palette text-purple me-2"></i>
+                                    {{ form.rang_darb.label }}
+                                </label>
+                                {{ form.rang_darb }}
+                            </div>
+                            <div class="col-md-3">
+                                <label class="form-label fw-bold text-dark mb-2">
+                                    <i class="fas fa-palette text-purple me-2"></i>
+                                    {{ form.rang_paye.label }}
+                                </label>
+                                {{ form.rang_paye }}
+                            </div>
+                            <div class="col-md-3">
+                                <label class="form-label fw-bold text-dark mb-2">
+                                    <i class="fas fa-palette text-purple me-2"></i>
+                                    {{ form.rang_dastgire.label }}
+                                </label>
+                                {{ form.rang_dastgire }}
+                            </div>
+                        </div>
+                        
+                        <!-- یادداشت -->
+                        <div class="mb-4">
+                            <label class="form-label fw-bold text-dark mb-2">
+                                <i class="fas fa-sticky-note text-secondary me-2"></i>
+                                {{ form.notes.label }}
+                            </label>
+                            {{ form.notes }}
+                        </div>
+                        
+                        <!-- دکمه‌ها -->
+                        <div class="d-grid gap-2 d-md-flex justify-content-md-end">
+                            <a href="{% url 'order_list' %}" class="btn btn-outline-secondary btn-lg px-5">
+                                <i class="fas fa-times me-2"></i>انصراف
+                            </a>
+                            <button type="submit" class="btn btn-success btn-lg px-5">
+                                <i class="fas fa-check-double me-2"></i>ثبت کامل
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+.bg-gradient-primary {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+}
+.text-purple { color: #8b5cf6 !important; }
+.form-label { font-size: 0.95rem; }
+.form-control:focus { 
+    border-color: #667eea; 
+    box-shadow: 0 0 0 0.2rem rgba(102, 126, 234, 0.25);
+}
+</style>
+{% endblock %}

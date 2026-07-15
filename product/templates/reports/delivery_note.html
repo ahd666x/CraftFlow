@@ -1,0 +1,118 @@
+{% load product_filters %}
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <title>برگه ترخیص کالا</title>
+    <style>
+        @page { size: A4 portrait; margin: 8mm; }
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: Tahoma, sans-serif;
+            direction: rtl;
+            font-size: 13px;
+            line-height: 1.7;
+            color: #000;
+        }
+        .header { text-align: center; margin-bottom: 8mm; }
+        .header h2 { font-size: 22px; margin-bottom: 4px; }
+        .header h4 { font-size: 16px; }
+        .rep-info { text-align: right; margin-bottom: 6mm; font-size: 13px; }
+        .info-row {
+            display: flex;
+            justify-content: space-between;
+            flex-wrap: wrap;
+            gap: 6px;
+            margin-bottom: 8mm;
+            font-size: 14px;
+        }
+        .info-row > div { flex: 1; white-space: nowrap; }
+        table { width: 100%; border-collapse: collapse; margin-bottom: 8mm; }
+        th, td {
+            border: 1px solid #000;
+            padding: 4px 6px;
+            text-align: center;
+            font-size: 12px;
+        }
+        th { background-color: #e0e0e0; font-weight: bold; }
+        .total-row { background-color: #f0f0f0; font-weight: bold; }
+        .footer { margin-top: 8mm; font-size: 14px; }
+        .ack { margin-bottom: 12mm; line-height: 2; }
+        .signatures {
+            display: flex;
+            justify-content: space-between;
+            margin-top: 15mm;
+        }
+        .signatures div {
+            width: 40%;
+            text-align: center;
+            padding-top: 4px;
+        }
+        @media print { body { background: white; } }
+    </style>
+</head>
+<body onload="window.print()">
+
+<div class="header">
+    <h2>صنایع چوبی سلوی</h2>
+    <h4>فرم ترخیص کالا</h4>
+</div>
+
+
+
+<div class="info-row">
+    <div><strong>نماینده :</strong> {{ representative_name }} </div>
+    <div><strong>نام راننده:</strong> ..........................</div>
+    <div><strong>شماره پلاک:</strong> {{ plate|default:".........................." }}</div>
+    <div><strong>تاریخ:</strong> {{ today|date:"Y/m/d" }}</div>
+</div>
+<table>
+    <thead>
+        <tr>
+            <th>ردیف</th>
+            <th>شماره سفارش</th>   <!-- ← ستون جدید -->
+            <th>عنوان کالا</th>
+            <th>تعداد</th>
+            <th>رنگ</th>
+            <th>نام مشتری</th>
+            <th>قیمت </th>
+            <th>توضیحات</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for unit in units %}
+        <tr>
+            <td>{{ forloop.counter }}</td>
+            <td>{{ unit.order_item.order.number|default:"-" }}</td>   <!-- ← شماره سفارش -->
+            <td>{{ unit.order_item.product.category.name }}  {{ unit.order_item.product.name }}</td>
+            <td>۱</td>
+            <td>{{ unit.order_item.color_summary }}</td>
+            <td>{{ unit.order_item.order.customer.name }}</td>
+            <td>{{ unit.order_item.unit_price|floatformat:"0"|intcomma }}</td>
+            <td>{{ unit.order_item.note }}</td>
+        </tr>
+        {% empty %}
+        <tr><td colspan="8">هیچ کالایی برای ترخیص وجود ندارد.</td></tr>
+        {% endfor %}
+        {% if units %}
+        <tr class="total-row">
+            <td colspan="6" style="text-align: left;">جمع کل</td>   <!-- ۸ ستون، ۲ تا برای جمع -->
+            <td>{{ total_price|floatformat:"0"|intcomma }}</td>
+            <td></td>
+        </tr>
+        {% endif %}
+    </tbody>
+</table>
+
+<div class="footer">
+    <p class="ack">
+        اقلام مشروحه توسط آقای ....................................... صحیح و سالم تحویل آقای ....................................... گردید.
+    </p>
+    <div class="signatures">
+        <div>امضا فرستنده</div>
+        <div>امضا گیرنده</div>
+    </div>
+</div>
+
+</body>
+</html>

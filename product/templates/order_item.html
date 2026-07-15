@@ -1,0 +1,222 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block title %}آیتم‌های سفارش{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4">
+    <div class="card shadow-sm border-0">
+        <div class="card-header bg-primary text-white d-flex justify-content-between align-items-center">
+            <h4 class="mb-0"><i class="bi bi-boxes me-2"></i>لیست آیتم‌های سفارش</h4>
+            <span class="badge bg-light text-dark fs-6">{{ items.paginator.count }} آیتم</span>
+        </div>
+
+        <!-- نوار جستجو و فیلتر -->
+        <div class="card-body border-bottom bg-light">
+            <form method="get" id="filter-form" class="row g-2 align-items-end">
+                <div class="col-md-5">
+                    <div class="input-group">
+                        <span class="input-group-text bg-white"><i class="bi bi-search"></i></span>
+                        <input type="text" name="q" class="form-control" placeholder="جستجو در شماره، مشتری، محصول..." value="{{ search_query|default:'' }}">
+                        <button class="btn btn-outline-primary" type="submit">جستجو</button>
+                    </div>
+                </div>
+                <div class="col-md-3">
+                    <select name="customer" form="filter-form" class="form-select">
+                        <option value="">نماینده</option>
+                        {% for c in customers %}
+                            <option value="{{ c.id }}" {% if selected_customer == c.id|stringformat:"s" %}selected{% endif %}>{{ c.username }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="col-md-2">
+                    <select name="category" form="filter-form" class="form-select">
+                        <option value="">همه دسته‌ها</option>
+                        {% for cat in categories %}
+                            <option value="{{ cat.id }}" {% if selected_category == cat.id|stringformat:"s" %}selected{% endif %}>{{ cat.name }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="col-md-2">
+                    <select name="product" form="filter-form" class="form-select">
+                        <option value="">همه محصولات</option>
+                        {% for prod in products %}
+                            <option value="{{ prod.id }}" {% if selected_product == prod.id|stringformat:"s" %}selected{% endif %}>{{ prod.name }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="col-md-12 text-end mt-2">
+                    <a href="?" class="btn btn-outline-danger btn-sm"><i class="bi bi-x-circle"></i> پاک کردن فیلترها</a>
+                    <input type="hidden" name="sort" value="{{ sort|default:'-order__created_at' }}">
+                </div>
+            </form>
+        </div>
+
+        <div class="table-responsive">
+            <table class="table table-hover align-middle mb-0">
+                <thead class="table-dark">
+                    <tr>
+                        <th>شماره</th>
+                        <th>مشتری</th>
+                        <th>
+                            تاریخ
+                            <a href="?sort={% if sort == 'order__created_at' %}-order__created_at{% else %}order__created_at{% endif %}{% for key,val in request.GET.items %}{% if key != 'sort' %}&{{ key }}={{ val }}{% endif %}{% endfor %}" class="text-white text-decoration-none ms-1">
+                                <i class="bi bi-arrow-{% if sort == 'order__created_at' %}up{% elif sort == '-order__created_at' %}down{% else %}up-down{% endif %}"></i>
+                            </a>
+                        </th>
+                        <th>دسته</th>
+                        <th>محصول</th>
+                        <th class="text-center">تعداد</th>
+                        <th>اندازه</th>
+                        <th>رنگ</th>
+                        <th>توضیحات</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for o in items %}
+                    <tr>
+                        <td>
+                            <a href="{% url 'item_detail' o.id %}" class="fw-bold text-primary text-decoration-none">
+                                {{ o.order.id }}/{{ o.id }}
+                            </a>
+                        </td>
+                        <td>{{ o.order.user.username }}</td>
+                        <td class="text-nowrap">{{ o.order.created_at|date:"Y/m/d" }}</td>
+                        <td>{{ o.product.category.name }}</td>
+                        <td>{{ o.product.name }}</td>
+                        <td class="text-center">
+                            <span class="badge bg-secondary rounded-pill">{{ o.quantity }}</span>
+                        </td>
+                        <td>{{ o.size|default:"-" }}</td>
+                        <td>{{ o.color_summary }}</td>
+                        <td><small class="text-muted">{{ o.notes|default:"-" }}</small></td>
+                    </tr>
+                    {% empty %}
+                    <tr>
+                        <td colspan="9" class="text-center py-5 text-muted">
+                            <i class="bi bi-inbox display-4 d-block mb-2"></i>
+                            هیچ آیتمی یافت نشد.
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+
+        {% if items.has_other_pages %}
+        <div class="card-footer bg-light d-flex justify-content-center">
+            <nav>
+                <ul class="pagination pagination-sm mb-0">
+                    {% if items.has_previous %}
+                        <li class="page-item">
+                            <a class="page-link" href="?page=1{% for key,val in request.GET.items %}{% if key != 'page' %}&{{ key }}={{ val }}{% endif %}{% endfor %}">ابتدا</a>
+                        </li>
+                        <li class="page-item">
+                            <a class="page-link" href="?page={{ items.previous_page_number }}{% for key,val in request.GET.items %}{% if key != 'page' %}&{{ key }}={{ val }}{% endif %}{% endfor %}">قبلی</a>
+                        </li>
+                    {% endif %}
+
+                    {% for num in items.paginator.page_range %}
+                        {% if items.number == num %}
+                            <li class="page-item active"><span class="page-link">{{ num }}</span></li>
+                        {% elif num > items.number|add:'-3' and num < items.number|add:'3' %}
+                            <li class="page-item"><a class="page-link" href="?page={{ num }}{% for key,val in request.GET.items %}{% if key != 'page' %}&{{ key }}={{ val }}{% endif %}{% endfor %}">{{ num }}</a></li>
+                        {% endif %}
+                    {% endfor %}
+
+                    {% if items.has_next %}
+                        <li class="page-item">
+                            <a class="page-link" href="?page={{ items.next_page_number }}{% for key,val in request.GET.items %}{% if key != 'page' %}&{{ key }}={{ val }}{% endif %}{% endfor %}">بعدی</a>
+                        </li>
+                        <li class="page-item">
+                            <a class="page-link" href="?page={{ items.paginator.num_pages }}{% for key,val in request.GET.items %}{% if key != 'page' %}&{{ key }}={{ val }}{% endif %}{% endfor %}">آخر</a>
+                        </li>
+                    {% endif %}
+                </ul>
+            </nav>
+        </div>
+        {% endif %}
+    </div>
+</div>
+
+<script>
+(function() {
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', init);
+    } else {
+        init();
+    }
+
+    function init() {
+        const categorySelect = document.querySelector('select[name="category"]');
+        const productSelect = document.querySelector('select[name="product"]');
+        const filterForm = document.getElementById('filter-form');
+        const initialProduct = "{{ selected_product|default:'' }}";
+
+        if (!categorySelect || !productSelect) return;
+
+        async function loadProducts(categoryId, selectedProductId = null) {
+            if (!categoryId) {
+                productSelect.innerHTML = '<option value="">همه محصولات</option>';
+                if (filterForm) filterForm.submit();
+                return;
+            }
+            try {
+                const response = await fetch(`/ajax/load-products/?category=${categoryId}`);
+                const data = await response.json();
+                productSelect.innerHTML = '<option value="">همه محصولات</option>';
+                data.forEach(product => {
+                    const option = document.createElement('option');
+                    option.value = product.id;
+                    option.textContent = product.name;
+                    if (selectedProductId && product.id == selectedProductId) {
+                        option.selected = true;
+                    }
+                    productSelect.appendChild(option);
+                });
+                if (filterForm) filterForm.submit();
+            } catch (error) {
+                console.error('خطا:', error);
+            }
+        }
+
+        categorySelect.addEventListener('change', function() {
+            loadProducts(this.value);
+        });
+
+        productSelect.addEventListener('change', function() {
+            if (filterForm) filterForm.submit();
+        });
+
+        const customerSelect = document.querySelector('select[name="customer"]');
+        if (customerSelect) {
+            customerSelect.addEventListener('change', function() {
+                if (filterForm) filterForm.submit();
+            });
+        }
+
+        const initialCategory = categorySelect.value;
+        if (initialCategory) {
+            (async () => {
+                try {
+                    const response = await fetch(`/ajax/load-products/?category=${initialCategory}`);
+                    const data = await response.json();
+                    productSelect.innerHTML = '<option value="">همه محصولات</option>';
+                    data.forEach(product => {
+                        const option = document.createElement('option');
+                        option.value = product.id;
+                        option.textContent = product.name;
+                        if (initialProduct && product.id == initialProduct) {
+                            option.selected = true;
+                        }
+                        productSelect.appendChild(option);
+                    });
+                } catch (error) {
+                    console.error('خطا در بارگذاری اولیه:', error);
+                }
+            })();
+        }
+    }
+})();
+</script>
+{% endblock %}

@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <title>سفارش #{{ order.id }}</title>
+    <style>
+        @page { 
+            size: A4 ;
+            margin: 2mm;
+        }
+        @media print {
+            body { 
+                font-family: 'Tahoma', sans-serif;
+                font-size: 11pt;
+                margin: 0;
+            }
+        }
+        body { 
+            font-family: 'Tahoma', sans-serif;
+            font-size: 12pt;
+            margin: 15px;
+            width: 95%;
+        }
+        .header {
+            background: #e3f2fd;
+            border: 2px solid #1976d2;
+            padding: 10px;
+            text-align: center;
+            margin-bottom: 15px;
+            display: flex;
+            justify-content: space-between;
+        }
+        .header h2 { 
+            margin: 0; 
+            color: #1976d2;
+            font-size: 16pt;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 11pt;
+        }
+        th, td {
+            border: 1px solid #ddd;
+            padding: 6px 4px;
+            text-align: center;
+        }
+        th {
+            background: #f5f5f5;
+            font-weight: bold;
+            color: #333;
+            font-size: 10pt;
+        }
+        tr:nth-child(even) { background: #fafafa; }
+        .no-print { display: none; }
+    </style>
+</head>
+<body onload="window.print()">
+    <!-- دکمه پرینت فقط در مرورگر -->
+    <div class="no-print text-center mb-3">
+        <button onclick="window.print()" style="padding: 10px 20px; background: #4caf50; color: white; border: none; border-radius: 5px;">
+            🖨️ چاپ
+        </button>
+        <br><br>
+    </div>
+    
+    <!-- هدر -->
+    <div class="header">
+        <div>
+            <h4>سفارش شماره: {{ order.id }}</h4>
+        </div>
+
+        <div style="font-size: 12pt; margin-top: 5px;">
+            <h4>نماینده : {{ order.user }}</h4>
+        </div>
+
+        <div style="font-size: 12pt; margin-top: 5px;">
+            <h4>مشتری : {{ order.customer }}-{{ order.number }}</h4>
+        </div>
+
+        <div style="font-size: 12pt; margin-top: 5px;">
+            <h4>تاریخ : {{ order.created_at|date:"Y/m/d" }}</h4>
+        </div>
+
+    </div>
+    
+    <!-- جدول ساده -->
+    <table>
+        <thead>
+            <tr>
+                <th style="width: 5%;">ردیف</th>
+                <th style="width: 15%;">محصول</th>
+                <th style="width: 15%;">گروه محصول</th>
+                <th style="width: 5%;">تعداد</th>
+                <th style="width: 5%;">اندازه</th>
+                <th style="width: 15%;">رنگ‌ها</th>
+                <th style="width: 15%;">توضیحات</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for item in items %}
+            <tr>
+                <td>{{ forloop.counter }}</td>
+                <td >{{ item.product }}</td>
+                <td >{{ item.category }}</td>
+                <td>{{ item.quantity }}</td>
+                <td>{{ item.size }}</td>
+                <td >{{ item.colors|default:"-" }}</td>
+                <td >{{ item.notes|default:"-" }}</td>
+            </tr>
+            {% empty %}
+            <tr>
+                <td colspan="5" style="text-align: center; padding: 20px;">هیچ آیتمی وجود ندارد</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    
+    <div style="margin-top: 20px; text-align: center; font-size: 10pt; color: #666;">
+        تعداد کل آیتم‌ها: {{ items|length }}
+    </div>
+
+    <!-- دکمه پرینت فقط در مرورگر -->
+    <div class="no-print text-center mb-3">
+        <button onclick="window.print()" style="padding: 10px 20px; background: #4caf50; color: white; border: none; border-radius: 5px;">
+            🖨️ چاپ
+        </button>
+        <br><br>
+    </div>
+
+
+
+
+</body>
+</html>

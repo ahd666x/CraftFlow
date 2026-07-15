@@ -1,0 +1,22 @@
+{% extends 'base.html' %}
+
+{% block content %}
+
+<h3>گزارش سفارش‌ها</h3>
+
+<table class="table table-bordered">
+<tr>
+    <th>وضعیت</th>
+    <th>تعداد</th>
+</tr>
+
+{% for row in data %}
+<tr>
+    <td>{{ row.status }}</td>
+    <td>{{ row.count }}</td>
+</tr>
+{% endfor %}
+
+</table>
+
+{% endblock %}

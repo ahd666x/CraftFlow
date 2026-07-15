@@ -1,0 +1,18 @@
+{% extends 'base.html' %}
+{% block content %}
+<div class="container mt-5">
+    <h3>تنظیم پلاک خودرو</h3>
+    <form method="post">
+        {% csrf_token %}
+        <div class="mb-3">
+            <label class="form-label">پلاک / شناسه محموله</label>
+            <input type="text" name="plate" class="form-control" value="{{ current_plate }}" required>
+        </div>
+        <button type="submit" class="btn btn-primary">ثبت و شروع بارگیری</button>
+        <a href="?clear=1" class="btn btn-outline-danger">پاک کردن پلاک</a>
+    </form>
+    {% if current_plate %}
+        <div class="alert alert-info mt-3">پلاک فعال: <strong>{{ current_plate }}</strong></div>
+    {% endif %}
+</div>
+{% endblock %}

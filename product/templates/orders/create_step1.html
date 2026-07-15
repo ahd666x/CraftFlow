@@ -1,0 +1,88 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block content %}
+<div class="container py-5">
+    <div class="row justify-content-center">
+        <div class="col-md-8">
+            <div class="card shadow">
+                <div class="card-header bg-primary text-white">
+                    <h4>ایجاد سفارش</h4>
+                </div>
+                <div class="card-body">
+                    <form method="post" id="order-form">
+                        {% csrf_token %}
+                        
+                        {% if is_admin %}
+                        <div class="row mb-3">
+                            <div class="col-md-6">
+                                {{ form.representative.label_tag }}
+                                {{ form.representative }}
+                            </div>
+                        </div>
+                        {% endif %}
+
+                        <!-- <div class="row mb-3">
+                            <div class="col-md-6">
+                                {{ form.customer.label_tag }}
+                                {{ form.customer }}
+                            </div>
+                        </div> -->
+
+
+                        <!-- <h5>یا مشتری جدید</h5> -->
+                        <div class="row">
+                            <div class="col-md-6 mb-3">
+                                {{ form.new_customer_name.label_tag }}
+                                {{ form.new_customer_name }}
+                            </div>
+                            <div class="col-md-6 mb-3">
+                                {{ form.number.label_tag }}
+                                {{ form.number }}
+                            </div>
+                            <!-- <div class="col-md-6 mb-3">
+                                {{ form.new_customer_phone.label_tag }}
+                                {{ form.new_customer_phone }}
+                            </div> -->
+                            <!-- <div class="col-12 mb-3">
+                                {{ form.new_customer_address.label_tag }}
+                                {{ form.new_customer_address }}
+                            </div> -->
+                        </div>
+                        <button type="submit" class="btn btn-success">ادامه</button>
+                        <a href="{% url 'dashboard' %}" class="btn btn-secondary">انصراف</a>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+{% if is_admin %}
+<script>
+$(document).ready(function() {
+    // وقتی نماینده تغییر کرد، لیست مشتریان به‌روز شود
+    $('#id_representative').change(function() {
+        var userId = $(this).val();
+        var $customerSelect = $('#id_customer');
+        $customerSelect.empty();
+        $customerSelect.append($('<option>', { value: '', text: '---------' }));
+        if (userId) {
+            $.ajax({
+                url: "{% url 'ajax_load_customers' %}",
+                data: { 'representative': userId },
+                success: function(data) {
+                    $.each(data, function(i, customer) {
+                        $customerSelect.append($('<option>', {
+                            value: customer.id,
+                            text: customer.name
+                        }));
+                    });
+                }
+            });
+        }
+    });
+});
+</script>
+{% endif %}
+{% endblock %}

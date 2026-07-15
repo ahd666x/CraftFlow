@@ -1,0 +1,126 @@
+# urls.py
+from django.urls import path
+from . import views
+from django.contrib import admin
+from django.urls import path, include
+from django.contrib.auth import views as auth_views
+
+
+urlpatterns = [
+    path('', views.dashboard, name='dashboard'),
+    path('orders/', views.order_list, name='order_list'),
+    path('orderlist/', views.order_item_list, name='order_item_list'),
+    path('orders/create/', views.create_order, name='create_order'),
+    path('orders/<int:order_id>/item/', views.add_item, name='add_item'),
+    path('orders/item/<int:item_id>/colors/', views.add_colors, name='add_colors'),
+    path('orders/create-complete/', views.create_complete_order, name='create_complete_order'),
+
+    # چاپ
+    path('orders/<int:order_id>/print/', views.order_print, name='order_print'),
+    path('item/<int:pk>/print/', views.print_sheet, name='print_sheet'),
+    path('item/<int:pk>/print_lable/', views.print_lable, name='print_lable'),
+
+    path('item/<int:pk>/', views.item_detail, name='item_detail'),
+    path('scan/<int:pk>/', views.scan_qr, name='scan_qr'),
+
+    path('reports/shipped/', views.report_shipped, name='report_shipped'),
+    # path('reports/shipped/print/', views.delivery_note_print, name='delivery_note_print'),
+
+    
+    # گزارش‌ها
+    path('reports/orders/', views.report_orders, name='report_orders'),
+    path('reports/stages/', views.report_stages, name='report_stages'),
+    path('reports/workers/', views.report_workers, name='report_workers'),
+    path('reports/delayed/', views.delayed_orders, name='report_delayed'),
+
+    path('upload/', views.upload_form, name='upload_form'),
+
+    path('scan/part/', views.scan_part, name='scan_part'),
+
+
+    # path('lable/part/', views.lable_part, name='lable_part'),
+    # path('lable/part/<int:print_lable_part>/', views.print_lable_part, name='print_lable_part'),
+
+    # path('scan/part/<str:barcode>/', views.scan_part_direct, name='scan_part_direct'),
+
+
+    path('orders/create/step1/', views.create_order_step1, name='create_order_step1'),
+    path('orders/create/step2/<int:order_id>/', views.create_order_step2, name='create_order_step2'),
+    path('ajax/load-products/', views.ajax_load_products, name='ajax_load_products'),
+    path('ajax/load-customers/', views.ajax_load_customers, name='ajax_load_customers'),
+
+    path('orders/<int:order_id>/', views.order_detail, name='order_detail'),
+
+    path('orders/<int:order_id>/export-autocut/', views.export_autocut_xml, name='export_autocut_xml'),
+    path('orders/export-multiple-autocut/', views.export_multiple_autocut, name='export_multiple_autocut'),
+
+    path('scan/part/cnc/', views.scan_part_cnc, name='scan_part_cnc'),
+    path('cnc/download/<str:barcode>/', views.download_cnc_file, name='download_cnc_file'),
+    path('scan/part/dr/', views.scan_part_dr, name='scan_part_dr'),
+    path('dr/download/<str:barcode>/', views.download_dr_file, name='download_dr_file'),
+
+    # فروشگاه مشتریان
+    # path('shop/', views.shop_product_list, name='shop_product_list'),
+    # path('shop/product/<int:pk>/', views.shop_product_detail, name='shop_product_detail'),
+    # path('shop/cart/add/', views.cart_add, name='cart_add'),
+    # path('shop/cart/', views.cart_view, name='cart_view'),
+    # path('shop/cart/update/', views.cart_update, name='cart_update'),
+    # path('shop/checkout/', views.checkout, name='checkout'),
+    # path('shop/order/<int:order_id>/', views.shop_order_tracking, name='shop_order_tracking'),
+    # path('ajax/load-customers/', views.ajax_load_customers, name='ajax_load_customers'),
+    # path('shop/orders/', views.shop_order_history, name='shop_order_history'),
+    # path('shop/order/<int:order_id>/', views.shop_order_tracking, name='shop_order_tracking'),
+
+
+    path('products/', views.admin_product_list, name='admin_product_list'),
+    path('product/<int:product_id>/bom/edit/', views.product_bom_edit, name='product_bom_edit'),
+    path('export-all/', views.export_all_data, name='export_all_data'),
+    path('import-data/', views.import_data, name='import_data'),
+    path('scan/packaging/<int:pk>/', views.scan_packaging_unit, name='scan_packaging_unit'),
+    path('orders/<int:order_id>/invoice/', views.order_invoice, name='order_invoice'),
+
+    path('scan/packaging/<int:pk>/undo/', views.undo_packaging_unit, name='undo_packaging_unit'),
+
+
+
+
+    # بخش مشتریان
+    path('customer/orders/', views.customer_order_list, name='customer_order_list'),
+    path('customer/orders/new/step1/', views.customer_create_order_step1, name='customer_create_order_step1'),
+    path('customer/orders/new/step2/<int:order_id>/', views.customer_create_order_step2, name='customer_create_order_step2'),
+
+    path('customer/orders/detail/<int:order_id>/', views.customer_order_detail, name='customer_order_detail'),
+    path('customer/orders/item/<int:item_id>/edit/', views.customer_edit_order_item, name='customer_edit_order_item'), 
+    path('customer/orders/item/<int:item_id>/delete/', views.customer_delete_order_item, name='customer_delete_order_item'),
+
+
+    path('orders/<int:order_id>/combined-print/', views.order_combined_print, name='order_combined_print'),
+
+
+    path('customer/orders/detail/<int:order_id>/', views.customer_order_detail, name='customer_order_detail'),
+    path('customer/orders/edit-info/<int:order_id>/', views.customer_edit_order_info, name='customer_edit_order_info'),
+    path('customer/orders/add-item/<int:order_id>/', views.customer_add_item, name='customer_add_item'),
+    path('customer/orders/item/<int:item_id>/edit/', views.customer_edit_order_item, name='customer_edit_order_item'),
+    path('customer/orders/item/<int:item_id>/delete/', views.customer_delete_order_item, name='customer_delete_order_item'),
+
+
+    path('ajax/load-product-colors/<int:product_id>/', views.ajax_load_product_colors, name='ajax_load_product_colors'),
+    path('products/create/', views.product_create, name='product_create'),
+    path('products/<int:product_id>/edit/', views.product_edit, name='product_edit'),
+    path('ajax/create-part/', views.ajax_create_part, name='ajax_create_part'),
+    path('ajax/get-part/<int:part_id>/', views.ajax_get_part, name='ajax_get_part'),
+    path('ajax/edit-part/<int:part_id>/', views.ajax_edit_part, name='ajax_edit_part'),
+
+
+    path('orders/<int:order_id>/generate-tasks/', views.order_generate_tasks, name='order_generate_tasks'),
+    path('shipping/set-plate/', views.set_plate, name='set_plate'),
+
+
+    path('customer/shipments/', views.customer_shipments, name='customer_shipments'),
+    path('customer/shipments/<str:plate>/<str:date>/', views.customer_shipment_detail, name='customer_shipment_detail'),
+
+
+]
+
+
+

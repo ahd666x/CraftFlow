@@ -1,0 +1,93 @@
+{% extends "admin/edit_inline/tabular.html" %}
+{% load i18n admin_urls static admin_list %}
+
+{% block table-tags %}
+    {{ block.super }}
+    <style>
+        .colors-btn { background: #007cba !important; color: white !important; padding: 8px 16px !important; border: none !important; border-radius: 6px !important; cursor: pointer !important; font-size: 13px !important; }
+        .colors-modal { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.6); z-index: 10000; display: flex; justify-content: center; align-items: center; }
+        .modal-content { background: #fff; padding: 30px; border-radius: 12px; max-width: 500px; width: 90%; max-height: 80vh; overflow: auto; box-shadow: 0 10px 30px rgba(0,0,0,0.3); }
+    </style>
+    <script>
+    document.addEventListener('DOMContentLoaded', function() {
+        document.querySelectorAll('.colors-btn').forEach(btn => {
+            btn.addEventListener('click', function() {
+                const itemId = this.dataset.item;
+                openColorsModal(itemId);
+            });
+        });
+    });
+
+    function openColorsModal(itemId) {
+        const modal = document.createElement('div');
+        modal.className = 'colors-modal';
+        modal.innerHTML = `
+            <div class="modal-content">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:25px;">
+                    <h3 style="margin:0;color:#333;font-size:22px;">افزودن رنگ - آیتم ${itemId}</h3>
+                    <button onclick="closeModal()" style="background:none;border:none;font-size:24px;cursor:pointer;color:#666;">×</button>
+                </div>
+                <form id="colorForm-${itemId}">
+                    <table style="width:100%;border-collapse:collapse;margin-bottom:25px;">
+                        <tr style="background:#f8f9fa;">
+                            <th style="padding:12px 8px;border:1px solid #ddd;">قطعه</th>
+                            <th style="padding:12px 8px;border:1px solid #ddd;">کد رنگ</th>
+                        </tr>
+                        <tr>
+                            <td style="padding:12px 8px;border:1px solid #ddd;">
+                                <select name="part" style="width:100%;padding:6px;border:1px solid #ddd;border-radius:4px;">
+                                    <option value="بدنه">بدنه</option>
+                                    <option value="درب">درب</option>
+                                    <option value="دستگیره">دستگیره</option>
+                                    <option value="پایه">پایه</option>
+                                    <option value="صفحه">صفحه</option>
+                                </select>
+                            </td>
+                            <td style="padding:12px 8px;border:1px solid #ddd;">
+                                <select name="code" style="width:100%;padding:6px;border:1px solid #ddd;border-radius:4px;">
+                                    <option value="1">1</option><option value="2">2</option><option value="3">3</option>
+                                    <option value="4">4</option><option value="5">5</option><option value="6">6</option>
+                                    <option value="7">7</option><option value="8">8</option><option value="9">9</option>
+                                    <option value="10">10</option>
+                                </select>
+                            </td>
+                        </tr>
+                    </table>
+                    <div style="text-align:right;">
+                        <button type="button" onclick="saveColor(${itemId})" style="background:#28a745;color:white;padding:12px 30px;border:none;border-radius:6px;cursor:pointer;font-size:15px;font-weight:bold;margin-right:10px;">✅ ثبت</button>
+                        <button type="button" onclick="closeModal()" style="background:#6c757d;color:white;padding:12px 30px;border:none;border-radius:6px;cursor:pointer;font-size:15px;">❌ انصراف</button>
+                    </div>
+                </form>
+            </div>
+        `;
+        document.body.appendChild(modal);
+    }
+
+    function closeModal() {
+        document.querySelector('.colors-modal')?.remove();
+    }
+
+    function saveColor(itemId) {
+        const form = document.getElementById(`colorForm-${itemId}`);
+        const formData = new FormData(form);
+        formData.append('orderitem', itemId);
+        
+        fetch('/admin/product/color/add/', {
+            method: 'POST',
+            body: formData,
+            headers: { 'X-CSRFToken': document.querySelector('[name=csrfmiddlewaretoken]').value }
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                alert('✅ رنگ ثبت شد!');
+                closeModal();
+                location.reload();
+            } else {
+                alert('❌ خطا: ' + (data.error || 'خطای ناشناخته'));
+            }
+        })
+        .catch(() => alert('❌ خطای ارتباط'));
+    }
+    </script>
+{% endblock %}

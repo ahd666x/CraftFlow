@@ -1,0 +1,131 @@
+{% extends 'base_shop.html' %}
+{% load static %}
+{% load product_filters %}
+
+{% block title %}سفارش‌های من{% endblock %}
+
+{% block extra_css %}
+<style>
+    .order-table th, .order-table td {
+        vertical-align: middle;
+        white-space: nowrap;
+    }
+    .order-table thead th {
+        background-color: #f8f9fa;
+        color: #495057;
+        font-weight: 600;
+    }
+    .clickable-row {
+        cursor: pointer;
+        transition: background-color 0.15s ease;
+    }
+    .clickable-row:hover {
+        background-color: #f1f3f5;
+    }
+    .packaging-status {
+        font-size: 0.85rem;
+        color: #495057;
+        line-height: 1.6;
+    }
+    .packaging-status span {
+        white-space: nowrap;
+    }
+    .no-packaging {
+        color: #adb5bd;
+        font-style: italic;
+    }
+    .completed-text {
+        color: #198754;  /* سبز بوت‌استرپ */
+        font-weight: 500;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container py-4">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h2 class="mb-0"><i class="bi bi-basket2-fill me-2"></i>سفارش‌های من</h2>
+        <a href="{% url 'customer_create_order_step1' %}" class="btn btn-success">
+            <i class="bi bi-plus-lg me-1"></i> ثبت سفارش جدید
+        </a>
+    </div>
+
+    {% if orders %}
+    <div class="card shadow-sm">
+        <div class="card-body p-0">
+            <div class="table-responsive">
+                <table class="table table-hover order-table mb-0">
+                    <thead>
+                        <tr>
+                            <th>#</th>
+                            <th>شماره سفارش</th>
+                            <th>تاریخ ثبت</th>
+                            <th>نام مشتری</th>
+                            <th>تعداد اقلام</th>
+                            <th>وضعیت بسته‌بندی و ارسال</th>
+                            <th class="text-end">مبلغ کل (ریال)</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for order in orders %}
+                        <tr class="clickable-row" data-href="{% url 'customer_order_detail' order.id %}">
+                            <td>{{ forloop.counter }}</td>
+                            <td>
+                                {% if order.number %}
+                                    {{ order.number }}
+                                {% else %}
+                                    #{{ order.id }}
+                                {% endif %}
+                            </td>
+                            <td>{{ order.created_at }}</td>
+                            <td>{{ order.customer.name }}</td>
+                            <td class="text-center">{{ order.items.count }}</td>
+                            <td class="packaging-status">
+                                {% with ps=order.packaging_summary %}
+                                {% if ps.total > 0 %}
+                                    {% if ps.packed == ps.total %}
+                                        <span class="completed-text">📦 بسته‌بندی: تکمیل شد</span>
+                                    {% else %}
+                                        <span>📦 بسته‌بندی: {{ ps.packed }}/{{ ps.total }}</span>
+                                    {% endif %}
+
+                                    {% if ps.shipped == ps.total %}
+                                        <span class="ms-3 completed-text">🚚 ارسال: تکمیل شد</span>
+                                    {% else %}
+                                        <span class="ms-3">🚚 ارسال: {{ ps.shipped }}/{{ ps.total }}</span>
+                                    {% endif %}
+                                {% else %}
+                                    <span class="no-packaging">بدون بسته‌بندی</span>
+                                {% endif %}
+                                {% endwith %}
+                            </td>
+                            <td class="text-end">{{ order.total_price|floatformat:"0"|intcomma }}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+    {% else %}
+    <div class="text-center py-5">
+        <i class="bi bi-inbox display-1 text-muted mb-3"></i>
+        <h5 class="text-muted">هنوز سفارشی ثبت نکرده‌اید</h5>
+        <a href="{% url 'customer_create_order_step1' %}" class="btn btn-primary mt-3">ثبت اولین سفارش</a>
+    </div>
+    {% endif %}
+</div>
+
+<script>
+    document.addEventListener('DOMContentLoaded', function() {
+        const rows = document.querySelectorAll('.clickable-row');
+        rows.forEach(row => {
+            row.addEventListener('click', function(e) {
+                if (e.target.closest('a, button')) return;
+                const url = this.getAttribute('data-href');
+                if (url) window.location.href = url;
+            });
+        });
+    });
+</script>
+{% endblock %}

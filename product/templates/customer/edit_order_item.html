@@ -1,0 +1,108 @@
+{% extends 'base_shop.html' %}
+{% load static %}
+
+{% block title %}ویرایش آیتم{% endblock %}
+
+{% block extra_css %}
+<style>
+    .edit-card {
+        background: #fff;
+        border-radius: 12px;
+        box-shadow: 0 4px 15px rgba(0,0,0,0.05);
+        padding: 1.5rem;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container py-4">
+    <div class="d-flex align-items-center mb-4">
+        <a href="{% url 'customer_order_detail' item.order.id %}" class="btn btn-outline-secondary me-3">
+            <i class="bi bi-arrow-right"></i>
+        </a>
+        <h4 class="mb-0">ویرایش آیتم از سفارش #{{ item.order.id }}</h4>
+    </div>
+
+    <div class="edit-card">
+        <form method="post" id="edit-item-form">
+            {% csrf_token %}
+
+            <div class="row g-3">
+                <!-- دسته و محصول -->
+                <div class="col-md-4">
+                    {{ item_form.category.label_tag }}
+                    {{ item_form.category }}
+                </div>
+                <div class="col-md-4">
+                    {{ item_form.product.label_tag }}
+                    {{ item_form.product }}
+                </div>
+
+                <!-- تعداد، اندازه، توضیحات -->
+                <div class="col-md-2">
+                    {{ item_form.quantity.label_tag }}
+                    {{ item_form.quantity }}
+                </div>
+                <div class="col-md-2">
+                    {{ item_form.size.label_tag }}
+                    {{ item_form.size }}
+                </div>
+                <div class="col-md-12">
+                    {{ item_form.notes.label_tag }}
+                    {{ item_form.notes }}
+                </div>
+            </div>
+
+            <!-- رنگ‌ها -->
+            <h6 class="mt-4">رنگ‌ها</h6>
+            <div class="row g-3">
+                {% for field in color_form %}
+                    <div class="col-md-3">
+                        {{ field.label_tag }} {{ field }}
+                    </div>
+                {% endfor %}
+            </div>
+
+            <div class="mt-4 d-flex gap-2">
+                <button type="submit" class="btn btn-success">💾 ذخیره تغییرات</button>
+                <a href="{% url 'customer_order_detail' item.order.id %}" class="btn btn-outline-secondary">انصراف</a>
+            </div>
+        </form>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+$(document).ready(function() {
+    function loadProducts(categoryId, selectedId) {
+        if (!categoryId) {
+            $('#id_product').html('<option value="">---------</option>');
+            return;
+        }
+        $.ajax({
+            url: '/ajax/load-products/',
+            data: {'category': categoryId},
+            success: function(data) {
+                var options = '<option value="">---------</option>';
+                $.each(data, function(i, product) {
+                    options += '<option value="' + product.id + '">' + product.name + '</option>';
+                });
+                $('#id_product').html(options);
+                if (selectedId) $('#id_product').val(selectedId);
+            }
+        });
+    }
+
+    $('#id_category').change(function() {
+        loadProducts($(this).val());
+    });
+
+    // بارگذاری اولیه
+    var initialCategory = $('#id_category').val();
+    if (initialCategory) {
+        loadProducts(initialCategory, "{{ item_form.product.value }}");
+    }
+});
+</script>
+{% endblock %}

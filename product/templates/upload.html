@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>آپلود اکسل</title>
+    <meta charset="utf-8">
+</head>
+<body>
+    <h2>آپلود فایل اکسل</h2>
+    <form method="post" enctype="multipart/form-data">
+        {% csrf_token %}
+        <input type="file" name="excel_file" accept=".xlsx,.xls" required>
+        <button type="submit">ذخیره در دیتابیس</button>
+    </form>
+
+    {% if messages %}
+        {% for message in messages %}
+            <p style="color: green;">{{ message }}</p>
+        {% endfor %}
+    {% endif %}
+</body>
+</html>

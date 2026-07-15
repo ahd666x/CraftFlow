@@ -1,0 +1,142 @@
+{% extends 'base.html' %}
+{% load static %}
+{% load product_filters %}   {# ← حتماً این خط برای فیلترهای سفارشی وجود داشته باشد #}
+
+{% block title %}مدیریت محصولات{% endblock %}
+
+{% block extra_css %}
+<style>
+    .product-card {
+        background: #fff;
+        border-radius: 16px;
+        box-shadow: 0 4px 24px rgba(0,0,0,0.04);
+        transition: transform 0.15s ease, box-shadow 0.15s ease;
+    }
+    .product-card:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 8px 30px rgba(0,0,0,0.06);
+    }
+    .table-product th, .table-product td {
+        vertical-align: middle;
+        white-space: nowrap;
+    }
+    .search-box {
+        max-width: 350px;
+    }
+    .clickable-row {
+        cursor: pointer;
+        transition: background-color 0.15s ease;
+    }
+    .clickable-row:hover {
+        background-color: #f8f9fa;
+    }
+    .color-list {
+        font-size: 0.8rem;
+        color: #555;
+        line-height: 1.4;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4">
+    <!-- هدر -->
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <div>
+            <h2 class="mb-1 fw-bold"><i class="bi bi-box-seam me-2 text-primary"></i>مدیریت محصولات</h2>
+            <p class="text-muted mb-0">مشاهده، جستجو و ویرایش محصولات</p>
+        </div>
+        <a href="{% url 'product_create' %}" class="btn btn-primary">
+            <i class="bi bi-plus-lg me-1"></i> محصول جدید
+        </a>
+    </div>
+
+    <!-- نوار فیلتر -->
+    <div class="product-card p-3 mb-4">
+        <form method="get" class="row g-2 align-items-end">
+            <div class="col-md-4">
+                <label class="form-label small text-muted">جستجو</label>
+                <div class="input-group">
+                    <span class="input-group-text bg-white"><i class="bi bi-search"></i></span>
+                    <input type="text" name="q" class="form-control" placeholder="نام محصول..." value="{{ search_query|default:'' }}">
+                </div>
+            </div>
+            <div class="col-md-3">
+                <label class="form-label small text-muted">دسته‌بندی</label>
+                <select name="category" class="form-select" onchange="this.form.submit()">
+                    <option value="">همه دسته‌ها</option>
+                    {% for cat in categories %}
+                        <option value="{{ cat.id }}" {% if selected_category == cat.id|stringformat:"s" %}selected{% endif %}>{{ cat.name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-md-5 d-flex align-items-end gap-2">
+                <!-- دکمه‌ی اعمال حذف شد – جستجو با Enter و دسته‌بندی با onchange کار می‌کنند -->
+                <a href="{% url 'admin_product_list' %}" class="btn btn-outline-secondary"><i class="bi bi-x-circle"></i> حذف فیلتر</a>
+            </div>
+        </form>
+    </div>
+
+    <!-- جدول محصولات -->
+    {% if products %}
+    <div class="product-card">
+        <div class="table-responsive">
+            <table class="table table-hover table-product mb-0">
+                <thead class="table-light">
+                    <tr>
+                        <th>#</th>
+                        <th>نام محصول</th>
+                        <th>دسته‌بندی</th>
+                        <th>سایز پیش‌فرض</th>
+                        <th>رنگ‌های پیش‌فرض</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for product in products %}
+                    <tr class="clickable-row" data-href="{% url 'product_edit' product.id %}">
+                        <td>{{ product.id }}</td>
+                        <td>
+                            <a href="{% url 'product_edit' product.id %}" class="fw-bold text-decoration-none">
+                                {{ product.name }}
+                            </a>
+                        </td>
+                        <td>{{ product.category.name }}</td>
+                        <td>{{ product.default_size|default:"-" }}</td>
+                        <td>
+                            <div class="color-list">
+                                {% if product.default_colors %}
+                                    {% for part, code in product.default_colors|format_colors %}
+                                        <span>{{ part }}: {{ code }}</span>{% if not forloop.last %}, {% endif %}
+                                    {% endfor %}
+                                {% else %}
+                                    —
+                                {% endif %}
+                            </div>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+    {% else %}
+    <div class="text-center py-5 bg-white rounded-3 shadow-sm">
+        <i class="bi bi-inbox display-3 text-muted mb-3"></i>
+        <h5 class="text-muted">هیچ محصولی یافت نشد</h5>
+        <a href="{% url 'product_create' %}" class="btn btn-primary mt-2">ایجاد اولین محصول</a>
+    </div>
+    {% endif %}
+</div>
+
+<script>
+    document.addEventListener('DOMContentLoaded', function() {
+        const rows = document.querySelectorAll('.clickable-row');
+        rows.forEach(row => {
+            row.addEventListener('click', function(e) {
+                if (e.target.tagName === 'A' || e.target.closest('a')) return;
+                window.location.href = this.getAttribute('data-href');
+            });
+        });
+    });
+</script>
+{% endblock %}

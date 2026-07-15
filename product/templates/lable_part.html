@@ -1,0 +1,244 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block content %}
+<div class="container-fluid mt-4">
+    <div class="row">
+        <!-- ستون سمت راست: فرم اسکن -->
+        <div class="col-lg-4 mb-4">
+            <div class="card shadow">
+                <div class="card-header bg-primary text-white text-center">
+                    <h5 class="mb-0">اسکن بارکد قطعه</h5>
+                </div>
+                <div class="card-body">
+                    <form method="post" id="scan-form"
+                          action="
+                              {% if worker_stage == 'cnc' %}{% url 'scan_part_cnc' %}
+                              {% elif worker_stage == 'dr' %}{% url 'scan_part_dr' %}
+                              {% else %}{% url 'scan_part' %}
+                              {% endif %}">
+                        {% csrf_token %}
+                        <div class="mb-3">
+                            <label for="barcode" class="form-label fw-bold">بارکد را وارد کنید:</label>
+                            <input type="text" name="barcode" id="barcode"
+                                   class="form-control form-control-lg text-center"
+                                   placeholder="مثال: k.1.1840x1220.item9" autofocus>
+                        </div>
+                        <div class="d-grid">
+                            <button type="submit" class="btn btn-success btn-lg">ثبت و تکمیل</button>
+                        </div>
+                    </form>
+                </div>
+                <div class="card-footer text-center">
+                    <span class="badge bg-info text-dark p-2 fs-6">
+                       {{ stage_display }}
+                    </span>
+                </div>
+            </div>
+
+            <!-- {% if worker_stage == 'cnc' %}
+            <div class="card shadow mt-4">
+                <div class="card-header bg-secondary text-white">
+                    <h6 class="mb-0"><i class="fas fa-download me-2"></i>دانلود مستقیم فایل CNC</h6>
+                </div>
+                <div class="card-body">
+                    <div class="input-group">
+                        <input type="text" id="cnc-download-barcode" class="form-control" placeholder="بارکد قطعه را وارد کنید">
+                        <button class="btn btn-outline-primary" type="button" onclick="downloadCNCFile()">
+                            <i class="fas fa-download"></i> دانلود
+                        </button>
+                    </div>
+                    <small class="text-muted d-block mt-2">می‌توانید بدون تکمیل تسک، فایل CNC را دریافت کنید.</small>
+                </div>
+            </div>
+            {% endif %} -->
+
+            <!-- {% if worker_stage == 'dr' %}
+            <div class="card shadow mt-4">
+                <div class="card-header bg-secondary text-white">
+                    <h6 class="mb-0"><i class="fas fa-download me-2"></i>دانلود مستقیم فایل سوراخکاری (XML)</h6>
+                </div>
+                <div class="card-body">
+                    <div class="input-group">
+                        <input type="text" id="dr-download-barcode" class="form-control" placeholder="بارکد قطعه را وارد کنید">
+                        <button class="btn btn-outline-primary" type="button" onclick="downloadDRFile()">
+                            <i class="fas fa-download"></i> دانلود
+                        </button>
+                    </div>
+                    <small class="text-muted d-block mt-2">می‌توانید بدون تکمیل تسک، فایل XML را دریافت کنید.</small>
+                </div>
+            </div>
+            {% endif %} -->
+        </div>
+
+        <!-- ستون سمت چپ: لیست کارهای آماده -->
+        <div class="col-lg-8">
+            <div class="card shadow">
+                <div class="card-header bg-info text-white d-flex justify-content-between align-items-center">
+                    <h5 class="mb-0">لیست کارهای آماده انجام</h5>
+                    <span class="badge bg-light text-dark fs-6">{{ pending_tasks.count }}</span>
+                </div>
+                <div class="card-body p-0">
+                    <div class="table-responsive" style="max-height: 600px; overflow-y: auto;">
+                        <table class="table table-hover align-middle mb-0">
+                            <thead class="table-light sticky-top">
+                                <tr>
+                                    <th># سفارش</th>
+                                    <th>نام قطعه</th>
+                                    <th>بارکد</th>
+                                    <th>تعداد</th>
+                                    <th>عملیات</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for task in pending_tasks %}
+                                <tr>
+                                    <td><strong>{{ task.order.id }}</strong></td>
+                                    <td>{{ task.part.name }}-{{ task.part.pname }}</td>
+                                    <td><code>{{ task.part.f3 }}</code></td>
+                                    <td><span class="badge bg-warning text-dark">{{ task.quantity }}</span></td>
+                                    <td>
+                                        <form method="post" onsubmit="return confirm('')">
+                                            {% csrf_token %}
+                                            <input type="hidden" name="task_id" value="{{ task.id }}">
+                                            <button type="submit" class="btn btn-sm btn-outline-success">
+                                                <i class="fas fa-check"></i> انجام شد
+                                            </button>
+                                        </form>
+                                    </td>
+                                </tr>
+                                {% empty %}
+                                <tr>
+                                    <td colspan="5" class="text-center py-4 text-muted">
+                                        <i class="fas fa-check-circle fa-2x mb-2 d-block"></i>
+                                        هیچ کاری در انتظار نیست.
+                                    </td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+                <div class="card-footer text-muted small">
+                    <!-- <i class="fas fa-info-circle"></i> با اسکن بارکد یا کلیک روی دکمه «انجام شد» تسک تکمیل می‌شود. -->
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Font Awesome -->
+<!-- <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css"> -->
+
+{% if worker_stage == 'cnc' %}
+<script>
+    // دانلود مستقیم فایل CNC
+    function downloadCNCFile() {
+        let barcode = document.getElementById('cnc-download-barcode').value.trim();
+        if (!barcode) {
+            alert('لطفاً بارکد قطعه را وارد کنید.');
+            return;
+        }
+        barcode = barcode.replace(/\.cnc$/i, '');
+        window.open(`/cnc/download/${encodeURIComponent(barcode)}/`, '_blank');
+    }
+
+    // ارسال AJAX برای اسکن در CNC
+    const scanFormCnc = document.querySelector('form[action*="scan_part_cnc"]');
+    if (scanFormCnc) {
+        scanFormCnc.addEventListener('submit', async function(e) {
+            e.preventDefault();
+            const formData = new FormData(this);
+            let barcode = formData.get('barcode').trim().replace(/\.cnc$/i, '');
+            formData.set('barcode', barcode);
+
+            try {
+                const response = await fetch(this.action, {
+                    method: 'POST',
+                    body: formData
+                });
+
+                if (response.ok && response.headers.get('Content-Type').includes('application/octet-stream')) {
+                    const blob = await response.blob();
+                    const url = window.URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    const disposition = response.headers.get('Content-Disposition');
+                    a.download = disposition ? disposition.split('filename=')[1].replace(/"/g, '') : 'file.cnc';
+                    a.click();
+                    window.URL.revokeObjectURL(url);
+
+                    alert('✅  CNC تکمیل و فایل دانلود شد.');
+                    document.getElementById('barcode').value = '';
+                    document.getElementById('barcode').focus();
+                } else {
+                    const errorText = await response.text();
+                    alert('⚠️ ' + (errorText || 'خطایی رخ داد.'));
+                    window.location.reload();
+                }
+            } catch (error) {
+                alert('❌ خطای شبکه: ' + error.message);
+                window.location.reload();
+            }
+        });
+    }
+</script>
+{% endif %}
+
+{% if worker_stage == 'dr' %}
+<script>
+    // دانلود مستقیم فایل سوراخکاری (XML)
+    function downloadDRFile() {
+        let barcode = document.getElementById('dr-download-barcode').value.trim();
+        if (!barcode) {
+            alert('لطفاً بارکد قطعه را وارد کنید.');
+            return;
+        }
+        barcode = barcode.replace(/\.xml$/i, '');
+        window.open(`/dr/download/${encodeURIComponent(barcode)}/`, '_blank');
+    }
+
+    // ارسال AJAX برای اسکن در سوراخکاری
+    const scanFormDr = document.querySelector('form[action*="scan_part_dr"]');
+    if (scanFormDr) {
+        scanFormDr.addEventListener('submit', async function(e) {
+            e.preventDefault();
+            const formData = new FormData(this);
+            let barcode = formData.get('barcode').trim().replace(/\.xml$/i, '');
+            formData.set('barcode', barcode);
+
+            try {
+                const response = await fetch(this.action, {
+                    method: 'POST',
+                    body: formData
+                });
+
+                if (response.ok && response.headers.get('Content-Type').includes('application/xml')) {
+                    const blob = await response.blob();
+                    const url = window.URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    const disposition = response.headers.get('Content-Disposition');
+                    a.download = disposition ? disposition.split('filename=')[1].replace(/"/g, '') : 'file.xml';
+                    a.click();
+                    window.URL.revokeObjectURL(url);
+
+                    alert('✅  سوراخکاری تکمیل و فایل XML دانلود شد.');
+                    document.getElementById('barcode').value = '';
+                    document.getElementById('barcode').focus();
+                } else {
+                    const errorText = await response.text();
+                    alert('⚠️ ' + (errorText || 'خطایی رخ داد.'));
+                    window.location.reload();
+                }
+            } catch (error) {
+                alert('❌ خطای شبکه: ' + error.message);
+                window.location.reload();
+            }
+        });
+    }
+</script>
+{% endif %}
+
+<!-- DEBUG: worker_stage = "{{ worker_stage }}" -->
+{% endblock %}

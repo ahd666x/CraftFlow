@@ -1,0 +1,13 @@
+{% extends 'base.html' %}
+{% block content %}
+<div class="container mt-5">
+    <h3>شروع بارگیری</h3>
+    <form method="get" action="{% url 'scan_part' %}">
+        <div class="mb-3">
+            <label class="form-label">پلاک خودرو / شناسه محموله</label>
+            <input type="text" name="plate" class="form-control" required autofocus>
+        </div>
+        <button type="submit" class="btn btn-primary">شروع اسکن</button>
+    </form>
+</div>
+{% endblock %}

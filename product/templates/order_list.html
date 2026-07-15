@@ -1,0 +1,220 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block title %}لیست سفارشات{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4">
+    <div class="row mb-4">
+        <div class="col-12">
+            <div class="d-flex justify-content-between align-items-center mb-3">
+                <h1 class="mb-0"><i class="bi bi-list-task text-primary me-2"></i>لیست سفارشات</h1>
+                <a href="{% url 'create_order_step1' %}" class="btn btn-primary">
+                    <i class="bi bi-plus-circle me-2"></i>سفارش جدید
+                </a>
+            </div>
+        </div>
+    </div>
+
+    <!-- ========== فرم انتخاب چندگانه برای خروجی AutoCUT ========== -->
+    <form id="batch-export-form" method="post" action="{% url 'export_multiple_autocut' %}">
+        {% csrf_token %}
+        <div class="mb-3">
+            <button type="submit" class="btn btn-success" id="batch-export-btn" disabled>
+                <i class="bi bi-file-earmark-zip"></i> خروجی AutoCUT برای انتخاب‌شده‌ها
+            </button>
+            <span id="selected-count" class="ms-2 text-muted">۰ سفارش انتخاب شده</span>
+        </div>
+    </form>
+
+    <div class="card shadow-sm">
+        <div class="card-header bg-transparent border-0 pb-0">
+            <form method="get" id="filter-form">
+                <div class="row align-items-center g-2 mb-3">
+                    <div class="col-md-5">
+                        <div class="input-group">
+                            <input type="text" name="q" class="form-control" placeholder="جستجو" value="{{ search_query|default:'' }}">
+                            <button class="btn btn-outline-secondary" type="submit">
+                                <i class="bi bi-search"></i>
+                            </button>
+                        </div>
+                    </div>
+                    <div class="col-md-5">
+                        <div class="btn-group" role="group">
+                            <a href="?status=draft" class="btn btn-sm {% if status_filter == 'draft' %}btn-primary{% else %}btn-outline-secondary{% endif %}">پیش‌نویس</a>
+                            <a href="?status=planned" class="btn btn-sm {% if status_filter == 'planned' %}btn-primary{% else %}btn-outline-secondary{% endif %}">برنامه‌ریزی</a>
+                            <a href="?status=producing" class="btn btn-sm {% if status_filter == 'producing' %}btn-primary{% else %}btn-outline-secondary{% endif %}">تولید</a>
+                            <a href="?status=completed" class="btn btn-sm {% if status_filter == 'completed' %}btn-primary{% else %}btn-outline-secondary{% endif %}">تکمیل</a>
+                            <a href="?" class="btn btn-sm btn-outline-danger">پاک کردن فیلتر</a>
+                        </div>
+                    </div>
+                </div>
+            </form>
+        </div>
+
+        <div class="table-responsive">
+            <table class="table table-hover mb-0">
+                <thead class="table-dark">
+                    <tr>
+                        <!-- چک‌باکس انتخاب همه -->
+                        <th style="width: 40px;">
+                            <input type="checkbox" id="select-all" form="batch-export-form">
+                        </th>
+                        <th>شماره</th>
+                        <th>نماینده</th>
+                        <th>تعداد</th>
+                        <th>وضعیت</th>
+                        <th>تاریخ</th>
+                        <th>عملیات</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for order in orders %}
+                    <tr class="clickable-row {% if order.status == 'producing' %}table-warning{% elif order.status == 'completed' %}table-success{% endif %}" data-href="{% url 'order_detail' order.id %}">
+                        <td>
+                            <input type="checkbox" name="order_ids" value="{{ order.id }}" form="batch-export-form" class="order-checkbox">
+                        </td>
+                        <td>
+                            <a href="{% url 'order_detail' order.id %}" class="fw-bold text-primary text-decoration-none">{{ order.id }}</a>
+                        </td>
+                        <td>{{ order.user }}</td>
+                        <td><span class="badge bg-info">{{ order.items.count }}</span></td>
+                        <td>
+                            <span class="badge status-badge 
+                                {% if order.status == 'draft' %}bg-secondary
+                                {% elif order.status == 'planned' %}bg-info
+                                {% elif order.status == 'producing' %}bg-warning text-dark
+                                {% else %}bg-success{% endif %}">
+                                {{ order.get_status_display }}
+                            </span>
+                        </td>
+                        <td>{{ order.created_at|date:"Y/m/d" }}</td>
+                        <td>
+                            <div class="btn-group btn-group-sm">
+                                {% if order.status == 'draft' %}
+                                <button type="button" class="btn btn-outline-primary generate-tasks" data-order="{{ order.id }}" title="ایجاد دستور تولید">
+                                    <i class="bi bi-play-circle"></i>
+                                </button>
+                                {% endif %}
+                                <a href="{% url 'order_combined_print' order.id %}" class="btn btn-outline-success" target="_blank" title="چاپ همه برگه‌ها">
+                                    <i class="bi bi-printer"></i>
+                                </a>
+                                <!-- ✅ دکمه پیش‌فاکتور -->
+                                <a href="{% url 'order_invoice' order.id %}" class="btn btn-outline-info" target="_blank" title="پیش‌فاکتور">
+                                    <i class="bi bi-receipt"></i>
+                                </a>
+                            </div>
+                        </td>
+                    </tr>
+                    {% empty %}
+                    <tr>
+                        <td colspan="7" class="text-center py-5">
+                            <i class="bi bi-inbox display-4 text-muted mb-3"></i>
+                            <p class="text-muted">سفارشی یافت نشد</p>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- Pagination -->
+    {% if orders.has_other_pages %}
+    <nav class="mt-4">
+        <ul class="pagination justify-content-center">
+            {% if orders.has_previous %}
+                <li class="page-item">
+                    <a class="page-link" href="?page=1{% for key,val in request.GET.items %}{% if key != 'page' %}&{{ key }}={{ val }}{% endif %}{% endfor %}">ابتدا</a>
+                </li>
+                <li class="page-item">
+                    <a class="page-link" href="?page={{ orders.previous_page_number }}{% for key,val in request.GET.items %}{% if key != 'page' %}&{{ key }}={{ val }}{% endif %}{% endfor %}">قبلی</a>
+                </li>
+            {% endif %}
+            {% for num in orders.paginator.page_range %}
+                {% if orders.number == num %}
+                    <li class="page-item active"><span class="page-link">{{ num }}</span></li>
+                {% elif num > orders.number|add:'-3' and num < orders.number|add:'3' %}
+                    <li class="page-item"><a class="page-link" href="?page={{ num }}{% for key,val in request.GET.items %}{% if key != 'page' %}&{{ key }}={{ val }}{% endif %}{% endfor %}">{{ num }}</a></li>
+                {% endif %}
+            {% endfor %}
+            {% if orders.has_next %}
+                <li class="page-item">
+                    <a class="page-link" href="?page={{ orders.next_page_number }}{% for key,val in request.GET.items %}{% if key != 'page' %}&{{ key }}={{ val }}{% endif %}{% endfor %}">بعدی</a>
+                </li>
+                <li class="page-item">
+                    <a class="page-link" href="?page={{ orders.paginator.num_pages }}{% for key,val in request.GET.items %}{% if key != 'page' %}&{{ key }}={{ val }}{% endif %}{% endfor %}">آخر</a>
+                </li>
+            {% endif %}
+        </ul>
+    </nav>
+    {% endif %}
+</div>
+
+<script>
+    // ========== مدیریت چک‌باکس‌ها ==========
+    document.addEventListener('DOMContentLoaded', function() {
+        const selectAllCheckbox = document.getElementById('select-all');
+        const orderCheckboxes = document.querySelectorAll('.order-checkbox');
+        const batchExportBtn = document.getElementById('batch-export-btn');
+        const selectedCountSpan = document.getElementById('selected-count');
+
+        function updateSelectedCount() {
+            const checkedBoxes = document.querySelectorAll('.order-checkbox:checked');
+            const count = checkedBoxes.length;
+            selectedCountSpan.textContent = count + ' سفارش انتخاب شده';
+            batchExportBtn.disabled = count === 0;
+        }
+
+        if (selectAllCheckbox) {
+            selectAllCheckbox.addEventListener('change', function(e) {
+                orderCheckboxes.forEach(cb => cb.checked = e.target.checked);
+                updateSelectedCount();
+            });
+        }
+
+        orderCheckboxes.forEach(cb => {
+            cb.addEventListener('change', updateSelectedCount);
+            // جلوگیری از کلیک روی سطر هنگام کلیک روی چک‌باکس
+            cb.addEventListener('click', function(e) {
+                e.stopPropagation();
+            });
+        });
+
+        updateSelectedCount();
+
+        // ========== کلیک روی سطر (رفتن به جزئیات) ==========
+        document.querySelectorAll('.clickable-row').forEach(row => {
+            row.addEventListener('click', function(e) {
+                if (e.target.closest('a, button, input[type="checkbox"]')) return;
+                window.location.href = this.dataset.href;
+            });
+        });
+
+        // ========== ایجاد دستور تولید با AJAX ==========
+        document.querySelectorAll('.generate-tasks').forEach(btn => {
+            btn.addEventListener('click', function(e) {
+                e.stopPropagation();
+                const orderId = this.dataset.order;
+                if (confirm('آیا مطمئنید که می‌خواهید دستور تولید صادر شود؟')) {
+                    fetch(`/orders/${orderId}/generate-tasks/`, {
+                        method: 'POST',
+                        headers: {
+                            'X-CSRFToken': '{{ csrf_token }}',
+                        },
+                    })
+                    .then(response => response.json())
+                    .then(data => {
+                        if (data.success) {
+                            location.reload();
+                        } else {
+                            alert('خطا: ' + (data.error || 'نامشخص'));
+                        }
+                    })
+                    .catch(err => alert('خطای شبکه'));
+                }
+            });
+        });
+    });
+</script>
+{% endblock %}

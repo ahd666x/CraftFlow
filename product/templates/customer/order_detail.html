@@ -1,0 +1,233 @@
+{% extends 'base_shop.html' %}
+{% load static %}
+
+{% block title %}جزئیات سفارش #{{ order.id }}{% endblock %}
+
+{% block extra_css %}
+<style>
+    .section-card {
+        background: #fff;
+        border-radius: 12px;
+        box-shadow: 0 4px 15px rgba(0,0,0,0.05);
+        padding: 1.5rem;
+        margin-bottom: 1.5rem;
+    }
+    .item-row:hover { background-color: #f8f9fa; }
+    .btn-action {
+        margin: 0 2px;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container py-4">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h2 class="mb-0">سفارش شماره #{{ order.id }}</h2>
+        <div>
+            <a href="{% url 'customer_order_list' %}" class="btn btn-outline-secondary me-2">
+                <i class="bi bi-arrow-right"></i> بازگشت
+            </a>
+            <a href="{% url 'order_invoice' order.id %}" class="btn btn-outline-primary" target="_blank">
+                <i class="bi bi-receipt"></i> پیش‌فاکتور
+            </a>
+        </div>
+    </div>
+
+    <!-- ==================== کارت اطلاعات کلی سفارش ==================== -->
+    <div class="section-card">
+        <div class="d-flex justify-content-between align-items-center mb-3">
+            <h5 class="mb-0"><i class="bi bi-info-circle me-2"></i>اطلاعات سفارش</h5>
+            {% if can_edit %}
+            <button class="btn btn-sm btn-outline-primary" type="button" data-bs-toggle="collapse" data-bs-target="#editOrderInfo">
+                <i class="bi bi-pencil"></i> ویرایش اطلاعات
+            </button>
+            {% endif %}
+        </div>
+
+        <div class="row">
+            <div class="col-md-3"><strong>نماینده:</strong> {{ order.user.get_full_name|default:order.user.username }}</div>
+            <div class="col-md-3"><strong>مشتری:</strong> {{ order.customer.name }}</div>
+            <div class="col-md-3"><strong>تاریخ ثبت:</strong> {{ order.created_at }}</div>
+            <!-- <div class="col-md-3"><strong>وضعیت:</strong> 
+                <span class="badge 
+                    {% if order.status == 'draft' %}bg-secondary
+                    {% elif order.status == 'planned' %}bg-info
+                    {% elif order.status == 'producing' %}bg-warning text-dark
+                    {% else %}bg-success{% endif %}">
+                    {{ order.get_status_display }}
+                </span>
+            </div> -->
+        </div>
+
+        {% if can_edit %}
+        <!-- فرم ویرایش اطلاعات (مخفی) -->
+        <div class="collapse mt-3" id="editOrderInfo">
+            <div class="card card-body bg-light">
+                <form method="post" action="{% url 'customer_edit_order_info' order.id %}">
+                    {% csrf_token %}
+                    <div class="row g-2">
+                        <div class="col-md-6">
+                            <label class="form-label">نام مشتری</label>
+                            <input type="text" name="name" class="form-control" value="{{ order.customer.name }}" required>
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label">شماره سفارش</label>
+                            <input type="text" name="number" class="form-control" value="{{ order.number }}">
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label">تلفن</label>
+                            <input type="text" name="phone" class="form-control" value="{{ order.customer.phone }}">
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label">آدرس</label>
+                            <textarea name="address" class="form-control" rows="2">{{ order.customer.address }}</textarea>
+                        </div>
+                    </div>
+                    <button type="submit" class="btn btn-success btn-sm mt-2">💾 ذخیره تغییرات</button>
+                </form>
+            </div>
+        </div>
+        {% endif %}
+    </div>
+
+    <!-- ==================== کارت آیتم‌های سفارش ==================== -->
+    <div class="section-card">
+        <div class="d-flex justify-content-between align-items-center mb-3">
+            <h5 class="mb-0"><i class="bi bi-boxes me-2"></i>آیتم‌های سفارش ({{ order.items.count }})</h5>
+            {% if can_edit %}
+            <button class="btn btn-sm btn-success" type="button" data-bs-toggle="collapse" data-bs-target="#addItemForm">
+                <i class="bi bi-plus-circle"></i> افزودن آیتم
+            </button>
+            {% endif %}
+        </div>
+
+        <!-- جدول آیتم‌ها -->
+        <div class="table-responsive">
+            <table class="table table-hover align-middle">
+                <thead class="table-light">
+                    <tr>
+                        <th>#</th>
+                        <th>دسته</th>
+                        <th>محصول</th>
+                        <th class="text-center">تعداد</th>
+                        <th>اندازه</th>
+                        <th>رنگ</th>
+                        <th>توضیحات</th>
+                        {% if can_edit %}<th class="text-center">عملیات</th>{% endif %}
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for item in order.items.all %}
+                    <tr class="item-row">
+                        <td>{{ forloop.counter }}</td>
+                        <td>{{ item.product.category }}</td>
+                        <td>{{ item.product.name }}</td>
+                        <td class="text-center">{{ item.quantity }}</td>
+                        <td>{{ item.size|default:"-" }}</td>
+                        <td>{{ item.color_summary }}</td>
+                        <td><small>{{ item.notes|default:"-" }}</small></td>
+                        {% if can_edit %}
+                        <td class="text-center">
+                            <a href="{% url 'customer_edit_order_item' item.id %}" class="btn btn-sm btn-outline-primary btn-action" title="ویرایش آیتم">
+                                <i class="bi bi-pencil"></i>
+                            </a>
+                            <form method="post" action="{% url 'customer_delete_order_item' item.id %}" style="display:inline;"
+                                  onsubmit="return confirm('آیا از حذف این آیتم مطمئن هستید؟')">
+                                {% csrf_token %}
+                                <button class="btn btn-sm btn-outline-danger btn-action" title="حذف آیتم">
+                                    <i class="bi bi-trash"></i>
+                                </button>
+                            </form>
+                        </td>
+                        {% endif %}
+                    </tr>
+                    {% empty %}
+                    <tr><td colspan="7" class="text-center py-3 text-muted">هنوز آیتمی اضافه نشده است.</td></tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+
+        {% if can_edit %}
+        <!-- فرم افزودن آیتم (مخفی) -->
+        <div class="collapse mt-3" id="addItemForm">
+            <div class="card card-body bg-light">
+                <h6>افزودن آیتم جدید</h6>
+                <form method="post" action="{% url 'customer_add_item' order.id %}" id="add-item-form">
+                    {% csrf_token %}
+                    <div class="row g-2">
+                        <div class="col-md-3">
+                            {{ add_item_form.category.label_tag }}
+                            {{ add_item_form.category }}
+                        </div>
+                        <div class="col-md-3">
+                            {{ add_item_form.product.label_tag }}
+                            {{ add_item_form.product }}
+                        </div>
+                        <div class="col-md-2">
+                            {{ add_item_form.quantity.label_tag }}
+                            {{ add_item_form.quantity }}
+                        </div>
+                        <div class="col-md-2">
+                            {{ add_item_form.size.label_tag }}
+                            {{ add_item_form.size }}
+                        </div>
+                        <div class="col-md-2">
+                            {{ add_item_form.notes.label_tag }}
+                            {{ add_item_form.notes }}
+                        </div>
+                    </div>
+                    <h6 class="mt-3">رنگ‌ها</h6>
+                    <div class="row g-2">
+                        {% for field in add_color_form %}
+                            <div class="col-md-3">
+                                {{ field.label_tag }} {{ field }}
+                            </div>
+                        {% endfor %}
+                    </div>
+                    <button type="submit" class="btn btn-success mt-3">➕ افزودن به سفارش</button>
+                </form>
+            </div>
+        </div>
+        {% endif %}
+    </div>
+
+    {% if not can_edit %}
+    <div class="alert alert-warning">
+        <i class="bi bi-info-circle"></i> این سفارش دیگر قابل ویرایش نیست (فقط پیش‌نویس‌های امروز قابل تغییر هستند).
+    </div>
+    {% endif %}
+</div>
+
+<!-- اسکریپت بارگذاری محصولات بر اساس دسته -->
+<script>
+$(document).ready(function() {
+    function loadProducts(categoryId, selectedId) {
+        if (!categoryId) {
+            $('#id_product').html('<option value="">---------</option>');
+            return;
+        }
+        $.ajax({
+            url: '/ajax/load-products/',
+            data: {'category': categoryId},
+            success: function(data) {
+                var options = '<option value="">---------</option>';
+                $.each(data, function(i, product) {
+                    options += '<option value="' + product.id + '">' + product.name + '</option>';
+                });
+                $('#id_product').html(options);
+                if (selectedId) $('#id_product').val(selectedId);
+            }
+        });
+    }
+
+    $('#id_category').change(function() {
+        loadProducts($(this).val());
+    });
+
+    // بارگذاری اولیه
+    var initialCat = $('#id_category').val();
+    if (initialCat) loadProducts(initialCat, "{{ add_item_form.product.value|default:'' }}");
+});
+</script>
+{% endblock %}

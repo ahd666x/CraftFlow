@@ -1,0 +1,160 @@
+<!-- {% extends 'base.html' %}
+
+{% block content %}
+
+<h2>لیست سفارش‌ها</h2>
+
+<table class="table table-bordered">
+<tr>
+    <th>شماره</th>
+    <th>مشتری</th>
+    <th>تاریخ</th>
+    <th>دسته</th>
+    <th>نام محصول</th>
+    <th>تعداد</th>
+    <th>اندازه</th>
+    <th>رنگ بدنه</th>
+    <th>cutting</th>
+    <th>cnc</th>
+    <th>dr</th>
+    <th>assembly1</th>
+    <th>painting</th>
+    <th>assembly2</th>
+    
+</tr>
+
+{% for o in items %}
+<tr>
+    <td> <a href="/item/{{ o.id }}" class="btn btn-primary">{{ o.id }}  </a> 
+    <td>{{ o.order.customer }}</td>
+    <td>{{ o.order.created_at }}</td>
+    <td>{{ o.product.category }}</td>
+    <td>{{ o.product.name }}</td>
+    <td>{{ o.quantity }}</td>
+    <td>{{ o.product.size }}</td>
+    <td>{{ o.color_body }}</td>
+
+
+    <td>{% if o.stages.cutting %}✔{% else %}⏳{% endif %}</td>
+    <td>{% if o.stages.cnc %}✔{% else %}⏳{% endif %}</td>
+    <td>{% if o.stages.dr %}✔{% else %}⏳{% endif %}</td>
+    <td>{% if o.stages.assembly1 %}✔{% else %}⏳{% endif %}</td>
+    <td>{% if o.stages.painting %}✔{% else %}⏳{% endif %}</td>
+    <td>{% if o.stages.assembly2 %}✔{% else %}⏳{% endif %}</td>
+
+
+</tr>
+{% endfor %}
+
+</table>
+
+{% endblock %} -->
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+{% extends 'base.html' %}
+{% load static %}
+{% block content %}
+<!DOCTYPE html>
+<html dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <title>پرینت سفارش #{{ order.id }}</title>
+
+    <style>
+        @media print {
+            .no-print { display: none !important; }
+            body { font-size: 12pt; }
+        }
+        .print-header { background: linear-gradient(135deg, #667eea, #764ba2); }
+        .item-row { page-break-inside: avoid; }
+    </style>
+</head>
+<body class="bg-light">
+    <div class="container-fluid py-4">
+        <!-- هدر -->
+        <div class="row no-print mb-4">
+            <div class="col-12 text-center">
+                <button onclick="window.print()" class="btn btn-success me-2">
+                    <i class="fas fa-print"></i> پرینت
+                </button>
+                <a href="{% url 'order_list' %}" class="btn btn-secondary">
+                    <i class="fas fa-arrow-right"></i> بازگشت
+                </a>
+            </div>
+        </div>
+        
+        <!-- اطلاعات سفارش -->
+        <div class="card shadow mb-4 print-header text-white">
+            <div class="card-body text-center">
+                <h2 class="mb-1">سفارش شماره: {{ order.id }}</h2>
+                <h5 class="mb-3">مشتری: {{ customer }}</h5>
+                <p class="mb-0">تعداد آیتم‌ها: {{ total_items }}</p>
+                <p class="mb-0">تاریخ: {{ order.created_at|date:"Y/m/d H:i" }}</p>
+            </div>
+        </div>
+        
+        <!-- آیتم‌های سفارش -->
+        {% for item in items %}
+        <div class="card shadow mb-4 item-row">
+            <div class="card-header bg-primary text-white">
+                <h6 class="mb-0">
+                    <i class="fas fa-box me-2"></i>
+                    {{ item.product }} - تعداد: {{ item.quantity }}
+                </h6>
+            </div>
+            <div class="card-body">
+                <div class="row">
+                    <div class="col-md-4">
+                        <strong>دسته:</strong> {{ item.category }}<br>
+                        <strong>اندازه:</strong> {{ item.size }}<br>
+
+                    </div>
+                    <div class="col-md-4">
+                        <strong>رنگ‌ها:</strong>
+                        {% for color in item.colors %}
+                        <span class="badge bg-info me-1 mb-1">{{ color }}</span>
+                        {% endfor %}
+                    </div>
+                    <div class="col-md-4">
+                        {% if item.bom %}
+                        <strong>BOM:</strong>
+                        <ul class="list-unstyled small">
+                            {% for bom in item.bom %}
+                            <li>{{ bom.part }}: {{ bom.quantity }}</li>
+                            {% endfor %}
+                        </ul>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+        </div>
+        {% empty %}
+        <div class="text-center py-5">
+            <i class="fas fa-inbox fa-3x text-muted mb-3"></i>
+            <h5 class="text-muted">هیچ آیتمی وجود ندارد</h5>
+        </div>
+        {% endfor %}
+    </div>
+</body>
+</html>
+{% endblock %}

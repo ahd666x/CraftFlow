@@ -1,0 +1,350 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <title>پرینت کامل سفارش #{{ order.id }}</title>
+    <style>
+        /* ========== کاغذ A5 عمودی ========== */
+        @page {
+            size: A5 portrait;
+            margin: 3mm;
+        }
+
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+
+        body {
+            font-family: 'Tahoma', sans-serif;
+            background: white;
+            direction: rtl;
+            font-size: 9pt;
+            line-height: 1.3;
+        }
+
+        /* ========== هر بخش ========== */
+        .print-section {
+            page-break-before: always;    /* قبل از هر آیتم، صفحه جدید */
+            break-inside: auto;           /* اجازهٔ شکستن محتوا (لیبل‌ها) */
+            padding: 2mm 0;
+            width: 100%;
+            max-width: 148mm;
+            margin: 0 auto;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        .print-section:last-child {
+            page-break-after: auto;
+        }
+        /* اولین بخش (خلاصه سفارش) نباید page-break-before داشته باشد */
+        .first-section {
+            page-break-before: avoid;
+        }
+
+        /* ---------- دکمه چاپ ---------- */
+        .no-print { text-align: center; margin: 8mm 0; }
+        @media print {
+            .no-print { display: none; }
+            body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+        }
+
+        /* ---------- ۱. فرم خلاصه سفارش ---------- */
+        .order-header {
+            width: 100%;
+            background: #e3f2fd;
+            border: 2px solid #1976d2;
+            padding: 6px;
+            text-align: center;
+            margin-bottom: 8px;
+            display: flex;
+            justify-content: space-between;
+            flex-wrap: wrap;
+            font-size: 10pt;
+        }
+        .order-header h4 { margin: 0; font-size: 9pt; }
+        table.order-summary {
+            width: 100%;
+            padding: 10px;
+            border-collapse: collapse;
+            font-size: 9pt;
+        }
+        table.order-summary th, table.order-summary td {
+            font-size: 9pt;
+            border: 1px solid #bbb;
+            padding: 2px 3px;
+            line-height: 2;
+            text-align: center;
+        }
+        table.order-summary th {
+            background: #f5f5f5;
+            font-weight: bold;
+            line-height: 3.5;
+            padding: 3px;
+            color: #333;
+            font-size: 7pt;
+        }
+        tr:nth-child(even) {background: #fafafa; }
+
+        /* ---------- ۲. فرم تولید A5 (بدون چرخش) ---------- */
+        .production-sheet {
+            width: 100%;
+            height: auto;                /* ارتفاع خودکار */
+            padding: 2mm;
+            background: white;
+            border: 1px solid #000;
+            display: flex;
+            flex-direction: column;
+            font-size: 8pt;
+            break-inside: avoid;         /* خود فرم نباید بشکند */
+            margin-bottom: 2mm;          /* فاصله از لیبل‌ها */
+        }
+        .prod-header {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 1.5mm;
+            font-size: 11pt;
+            line-height: 1.25;
+        }
+        .prod-header > div { flex: 1; }
+        .prod-header h4 {
+            margin: 1px 0;
+            font-size: 7.5pt;
+            font-weight: bold;
+            unicode-bidi: plaintext;
+            direction: rtl;
+        }
+        .prod-title {
+            text-align: center;
+            font-size: 10pt;
+            font-weight: bold;
+            margin: 2mm 0;
+            padding-bottom: 1mm;
+            border-bottom: 1px solid #999;
+        }
+        table.prod-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 1.5mm 0;
+            flex-shrink: 0;
+            font-size: 6.5pt;
+            line-height: 1.15;
+        }
+        table.prod-table th, table.prod-table td {
+            border: 1px solid black;
+            padding: 1px;
+            text-align: center;
+        }
+        table.prod-table th {
+            background-color: #f0f0f0;
+            font-weight: bold;
+        }
+        .prod-signatures {
+            display: flex;
+            justify-content: space-between;
+            margin-top: 1mm;
+            padding-top: 2mm;
+            gap: 1mm;
+            font-size: 7pt;
+        }
+        .prod-signatures .sign-box { text-align: center; line-height: 1.6; }
+        .prod-qr { text-align: center; margin-top: 1.5mm; }
+        .prod-qr img { width: 20mm; height: 20mm; object-fit: contain; }
+
+        /* ---------- ۳. لیبل‌های بسته‌بندی ---------- */
+        .labels-wrapper {
+            width: 100%;
+            break-inside: auto;          /* لیبل‌ها اجازهٔ شکستن دارند */
+        }
+        .label-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            grid-auto-rows: 58mm;
+            gap: 1.5mm;
+            width: 100%;
+        }
+        .label-item {
+            border: 1.5px solid #000;
+            padding: 1.5mm;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            font-weight: bold;
+            background: white;
+            page-break-inside: avoid;
+            font-size: 8pt;
+        }
+        .label-item .lbl-header {
+            display: flex;
+            justify-content: space-between;
+            font-size: 8pt;
+            line-height: 1.7;
+        }
+        .label-item .lbl-header > div { flex: 1; }
+        .label-item .lbl-product {
+            text-align: center;
+            font-size: 13pt;
+            font-weight: bold;
+            margin: 2mm 0;
+            border-top: 1px solid #ccc;
+            border-bottom: 1px solid #ccc;
+            padding: 1mm 0;
+        }
+        .label-item .lbl-qr { text-align: center; margin-top: auto; }
+        .label-item .lbl-qr img { width: 20mm; height: 20mm; object-fit: contain; }
+    </style>
+</head>
+<body onload="window.print()">
+    <div class="no-print">
+        <button onclick="window.print()" style="padding: 8px 16px; background: #198754; color: white; border: none; border-radius: 5px; font-size: 12px;">
+            🖨️ چاپ همهٔ برگه‌ها
+        </button>
+        <button onclick="window.close()" style="padding: 8px 16px; background: #6c757d; color: white; border: none; border-radius: 5px; margin-right: 8px;">
+            بستن
+        </button>
+    </div>
+
+    <!-- ==================== ۱. فرم کلی سفارش ==================== -->
+    <div class="print-section first-section">
+        <div class="order-header">
+            <div><h4>سفارش شماره: {{ order.id }}</h4></div>
+            <div><h4>نماینده : {{ order.user }}</h4></div>
+            <div><h4>مشتری : {{ order.customer }}-{{ order.number }}</h4></div>
+            <div><h4>تاریخ : {{ order.created_at|date:"Y/m/d" }}</h4></div>
+        </div>
+
+        <table class="order-summary">
+            <thead>
+                <tr>
+                    <th>ردیف</th>
+                    <th>دسته</th>
+                    <th>محصول</th>
+                    <th>تعداد</th><th>اندازه</th><th>رنگ‌ها</th><th>توضیحات</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for item in order.items.all %}
+                <tr>
+                    <td>{{ forloop.counter }}</td>
+                    <td>{{ item.product.category.name }}</td>
+                    <td>{{ item.product.name }}</td>
+                    <td>{{ item.quantity }}</td>
+                    <td>{{ item.size|default:"-" }}</td>
+                    <td>{{ item.color_summary }}</td>
+                    <td>{{ item.notes|default:"-" }}</td>
+                </tr>
+                {% empty %}
+                <tr><td colspan="7" style="text-align:center;">هیچ آیتمی وجود ندارد</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+
+    </div>
+
+    <!-- ==================== ۲. برای هر آیتم: فرم تولید + لیبل‌ها (ادغام‌شده) ==================== -->
+    {% for data in items_data %}
+    <div class="print-section">
+        <!-- فرم تولید -->
+        <div class="production-sheet">
+            <div class="prod-header">
+                <div>
+                    <h4>نماینده : {{ order.user }}</h4>
+                    <h4>مشتری : {{ order.customer }}-{{ order.number }}</h4>
+                    <h4>توضیحات: {{ data.item.notes }}</h4>
+                </div>
+                <div>
+                    <h4>شماره: {{ order.id }}/{{ data.item.id }}</h4>
+                    <h4>رنگ: {{ data.item.color }}</h4>
+                    <h4>اندازه: {{ data.item.size }}</h4>
+                </div>
+                <div>
+                    <h4>تاریخ: {{ order.created_at|date:"Y/m/d" }}</h4>
+                    <h4>تعداد : {{ data.item.quantity }}</h4>
+                </div>
+            </div>
+
+            <div class="prod-title">
+                {{ data.item.product.category.name }}  {{ data.item.product.name }}
+            </div>
+
+            <table class="prod-table">
+                <thead>
+                    <tr>
+                        <th>ردیف</th><th>اقلام</th><th>تعداد</th>
+                        <th>برش</th><th>CNC</th><th>سوراخ</th>
+                        <th>مونتاژ</th><th>نقاشی</th><th>مونتاژ</th><th>توضیح</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for bp in data.item.bompart %}
+                    <tr>
+                        <td>{{ forloop.counter }}</td>
+                        <td>{{ bp.part.name }}</td>
+                        <td>{{ bp.quantity }}</td>
+                        <td></td><td></td><td></td><td></td><td></td><td></td>
+                        <td></td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+
+            <div class="prod-signatures">
+                <div class="sign-box">برش<br>نقاشی</div>
+                <div class="sign-box">CNC<br>مونتاژ۲</div>
+                <div class="sign-box">سوراخکاری<br>کنترل کیفیت</div>
+            </div>
+
+            <div class="prod-qr">
+                {% if data.item.qr_code %}
+                    <img src="{{ data.item.qr_code.url }}" alt="QR">
+                {% endif %}
+            </div>
+        </div>
+
+        <!-- لیبل‌های بسته‌بندی (در صورت وجود) -->
+        {% if data.units %}
+        <div class="labels-wrapper">
+            {% comment %} <h5 style="text-align:center; margin-bottom:2mm; font-size:8pt;">برچسب‌های بسته‌بندی - {{ data.item.product.name }}</h5> {% endcomment %}
+            <div class="label-grid">
+                {% for unit in data.units %}
+                <div class="label-item">
+                    <div class="lbl-header">
+                        <div>
+                            <div>نماینده : {{ data.item.order.user }}</div>
+                            <div>تاریخ : {{ data.item.order.created_at|date:"Y/m/d" }}</div>
+                            <div>سفارش : {{ data.item.order.id }}/{{ data.item.id }}/{{ unit.unit_number }}</div>
+                        </div>
+                        <div>
+                            <div>رنگ : {{ data.item.color }}</div>
+                            <div>اندازه : {{ data.item.size }}</div>
+                            <div>مشتری : {{ data.item.order.customer }} - {{ data.item.order.number }}</div>
+                        </div>
+                    </div>
+
+                    <div class="lbl-product">
+                        {{ data.item.product.category.name }} {{ data.item.product.name }}
+                    </div>
+
+                    <div class="lbl-qr">
+                        {% if unit.qr_code %}
+                            <img src="{{ unit.qr_code.url }}" alt="QR">
+                        {% else %}
+                            <div style="width:20mm;height:20mm;border:1px dashed #999;margin:auto;font-size:6pt;">
+                                QR Code
+                            </div>
+                        {% endif %}
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+        {% endif %}
+    </div>
+    {% endfor %}
+
+    <div class="no-print" style="margin-top: 12px;">
+        <button onclick="window.print()" style="padding: 8px 16px; background: #198754; color: white; border: none; border-radius: 5px; font-size: 12px;">
+            🖨️ چاپ همهٔ برگه‌ها
+        </button>
+    </div>
+</body>
+</html>

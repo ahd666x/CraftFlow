@@ -1,0 +1,22 @@
+{% extends 'base.html' %}
+
+{% block content %}
+
+<h3>گزارش کارگرها</h3>
+
+<table class="table table-bordered">
+<tr>
+    <th>کاربر</th>
+    <th>تعداد کار</th>
+</tr>
+
+{% for row in data %}
+<tr>
+    <td>{{ row.user__username }}</td>
+    <td>{{ row.count }}</td>
+</tr>
+{% endfor %}
+
+</table>
+
+{% endblock %}

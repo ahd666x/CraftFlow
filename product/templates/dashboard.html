@@ -1,0 +1,110 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block title %}سلوی چوب{% endblock %}
+
+{% block extra_css %}
+<style>
+    .quick-link-card {
+        background: #fff;
+        border-radius: 18px;
+        padding: 1.8rem 1rem;
+        text-align: center;
+        box-shadow: 0 4px 20px rgba(0,0,0,0.03);
+        transition: all 0.2s;
+        text-decoration: none;
+        color: #1f2937;
+        display: block;
+        height: 100%;
+    }
+    .quick-link-card:hover {
+        background: #f9fafb;
+        transform: translateY(-4px);
+        box-shadow: 0 12px 28px rgba(0,0,0,0.06);
+        color: #1f2937;
+    }
+    .quick-link-icon {
+        font-size: 2.4rem;
+        margin-bottom: 0.6rem;
+        color: #2563eb;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4">
+
+    <!-- ردیف اول -->
+    <div class="row g-3 mb-3">
+        <div class="col-6 col-md-3">
+            <a href="{% url 'order_list' %}" class="quick-link-card">
+                <div class="quick-link-icon"><i class="bi bi-list-ul"></i></div>
+                <h6 class="fw-bold">لیست سفارشات</h6>
+            </a>
+        </div>
+        <div class="col-6 col-md-3">
+            <a href="{% url 'order_item_list' %}" class="quick-link-card">
+                <div class="quick-link-icon"><i class="bi bi-boxes"></i></div>
+                <h6 class="fw-bold">آیتم‌های سفارش</h6>
+            </a>
+        </div>
+        <div class="col-6 col-md-3">
+            <a href="{% url 'create_order_step1' %}" class="quick-link-card">
+                <div class="quick-link-icon"><i class="bi bi-plus-circle"></i></div>
+                <h6 class="fw-bold">ایجاد سفارش جدید</h6>
+            </a>
+        </div>
+        <div class="col-6 col-md-3">
+            <a href="{% url 'admin_product_list' %}" class="quick-link-card">
+                <div class="quick-link-icon"><i class="bi bi-diagram-3"></i></div>
+                <h6 class="fw-bold">لیست محصولات</h6>
+            </a>
+        </div>
+    </div>
+
+    <!-- ردیف دوم -->
+    <div class="row g-3 mb-3">
+        <div class="col-6 col-md-3">
+            <a href="{% url 'product_create' %}" class="quick-link-card">
+                <div class="quick-link-icon"><i class="bi bi-plus-square"></i></div>
+                <h6 class="fw-bold">ایجاد محصول جدید</h6>
+            </a>
+        </div>
+        <div class="col-6 col-md-3">
+            <a href="{% url 'scan_part' %}" class="quick-link-card">
+                <div class="quick-link-icon"><i class="bi bi-qr-code-scan"></i></div>
+                <h6 class="fw-bold">اسکن قطعه</h6>
+            </a>
+        </div>
+        <div class="col-6 col-md-3">
+            <a href="{% url 'report_stages' %}" class="quick-link-card">
+                <div class="quick-link-icon"><i class="bi bi-bar-chart"></i></div>
+                <h6 class="fw-bold">گزارش مراحل تولید</h6>
+            </a>
+        </div>
+        <div class="col-6 col-md-3">
+            <a href="{% url 'report_shipped' %}" class="quick-link-card">
+                <div class="quick-link-icon"><i class="bi bi-truck"></i></div>
+                <h6 class="fw-bold">گزارش ارسال‌شده‌ها</h6>
+            </a>
+        </div>
+    </div>
+
+    <!-- ردیف سوم -->
+    <div class="row g-3">
+        <div class="col-6 col-md-3">
+            <a href="{% url 'export_all_data' %}" class="quick-link-card">
+                <div class="quick-link-icon"><i class="bi bi-download"></i></div>
+                <h6 class="fw-bold">خروجی Excel</h6>
+            </a>
+        </div>
+        <div class="col-6 col-md-3">
+            <a href="{% url 'import_data' %}" class="quick-link-card">
+                <div class="quick-link-icon"><i class="bi bi-upload"></i></div>
+                <h6 class="fw-bold">ورود از Excel</h6>
+            </a>
+        </div>
+    </div>
+
+</div>
+{% endblock %}

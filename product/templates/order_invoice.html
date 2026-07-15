@@ -1,0 +1,260 @@
+{% load product_filters %}
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <title>پیش‌فاکتور سفارش #{{ order.id }}</title>
+    <style>
+        @page {
+            size: A4;
+            margin: 8mm;
+        }
+
+        body {
+            font-family: 'Tahoma', 'Arial', sans-serif;
+            font-size: 11pt;
+            direction: rtl;
+            color: #222;
+            background: #fff;
+        }
+
+        .invoice-container {
+            max-width: 800px;
+            margin: 0 auto;
+            border: 2px solid #000;
+            padding: 12px;
+        }
+
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            border-bottom: 2px solid #000;
+            padding-bottom: 8px;
+            margin-bottom: 12px;
+        }
+
+        .company-info {
+            flex: 1;
+            text-align: right;
+        }
+
+        .company-name {
+            font-size: 20pt;
+            font-weight: bold;
+            color: #1a237e;
+        }
+
+        .invoice-title {
+            flex: 1;
+            text-align: left;
+            font-weight: bold;
+        }
+
+        .invoice-title h3 {
+            margin: 0;
+            font-size: 14pt;
+            color: #c62828;
+        }
+
+        .info-section {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 12px;
+            padding: 8px;
+            background: #f5f5f5;
+            border-radius: 6px;
+            font-size: 10pt;
+        }
+
+        .customer-info, .order-info {
+            flex: 1;
+        }
+
+        .customer-info strong, .order-info strong {
+            display: block;
+            margin-bottom: 4px;
+            color: #0d47a1;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 12px 0;
+            font-size: 10pt;
+        }
+
+        th {
+            background: #1a237e;
+            color: white;
+            padding: 6px;
+            text-align: center;
+        }
+
+        td {
+            padding: 6px;
+            border: 1px solid #ccc;
+            text-align: center;
+        }
+
+        tr:nth-child(even) {
+            background: #f9f9f9;
+        }
+
+        .total-section {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-top: 15px;
+            padding: 10px;
+            background: #e8eaf6;
+            border-radius: 6px;
+            font-weight: bold;
+        }
+
+        .notes {
+            margin-top: 12px;
+            padding: 8px;
+            border: 1px dashed #999;
+            font-size: 9pt;
+            color: #555;
+        }
+
+        .footer {
+            margin-top: 15px;
+            text-align: center;
+            font-size: 8pt;
+            color: #888;
+            border-top: 1px solid #ddd;
+            padding-top: 8px;
+        }
+
+        .colors-list {
+            font-size: 9pt;
+            color: #444;
+        }
+
+        @media print {
+            body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+            .no-print { display: none !important; }
+        }
+    </style>
+</head>
+<body>
+    <div class="invoice-container">
+        <!-- هدر -->
+        <div class="header">
+            <div class="company-info">
+                <div class="company-name"> سلوی چوب</div>
+                <!-- <div></div>
+                <div></div>
+                <div></div> -->
+            </div>
+            <div class="invoice-title">
+                <h3>پیش‌فاکتور</h3>
+                <div>شماره: <strong>{{ order.id }}</strong></div>
+                <div>تاریخ: {{ order.created_at|date:"Y/m/d" }}</div>
+            </div>
+        </div>
+
+        <!-- اطلاعات مشتری و سفارش -->
+        <div class="info-section">
+            <div class="customer-info">
+                <strong>اطلاعات مشتری:</strong>
+                <div>👤 نام: {{ order.customer.name }}</div>
+                <!-- <div>📞 تلفن: {{ order.customer.phone|default:"---" }}</div> -->
+                <!-- <div>📍 آدرس: {{ order.customer.address|default:"---" }}</div> -->
+                <div>🕴 نماینده: {{ order.user.get_full_name|default:order.user.username }}</div>
+            </div>
+            <div class="order-info">
+                <strong>جزئیات سفارش:</strong>
+                <div>📅 تاریخ ثبت: {{ order.created_at|date:"Y/m/d" }}</div>
+                <!-- <div>📊 وضعیت: {{ order.get_status_display }}</div> -->
+                <div>📦 تعداد آیتم‌ها: {{ order.items.count }}</div>
+                {% if order.number %}
+                <div>🔢 شماره سفارش: {{ order.number }}</div>
+                {% endif %}
+            </div>
+        </div>
+
+        <!-- جدول آیتم‌ها -->
+        <table>
+            <thead>
+                <tr>
+                    <th>ردیف</th>
+                    <th>گروه محصول</th>
+                    <th>نام محصول</th>
+                    <th>تعداد</th>
+                    <th>اندازه</th>
+                    <th>رنگ‌ها</th>
+                    <th>قیمت واحد (ریال)</th>
+                    <th>قیمت کل (ریال)</th>
+                    <th>توضیحات</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for item in order.items.all %}
+                <tr>
+                    <td>{{ forloop.counter }}</td>
+                    <td>{{ item.product.category.name }}</td>
+                    <td>{{ item.product.name }}</td>
+                    <td>{{ item.quantity }}</td>
+                    <td>{{ item.size|default:"-" }}</td>
+                    <td><span class="colors-list">{{ item.color_summary }}</span></td>
+                    <td>{{ item.unit_price|floatformat:"0"|intcomma }}</td>
+                    <td>{{ item.line_total|floatformat:"0"|intcomma }}</td>
+                    <td>{{ item.notes|default:"-" }}</td>
+                </tr>
+                {% empty %}
+                <tr>
+                    <td colspan="9">هیچ آیتمی در این سفارش وجود ندارد.</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+            <tfoot>
+                <tr style="background:#e8eaf6; font-weight:bold;">
+                    <td colspan="7" style="text-align:left;">جمع کل (ریال)</td>
+                    <td>{{ order.total_price|floatformat:"0"|intcomma }}</td>
+                    <td></td>
+                </tr>
+            </tfoot>
+        </table>
+
+        <!-- جمع‌بندی -->
+        <div class="total-section">
+            <div>
+                <span>تعداد کل : {{ order.items.count }}</span>
+            </div>
+            <!-- <div>
+                <span>وضعیت: {{ order.get_status_display }}</span>
+            </div> -->
+        </div>
+
+        <!-- یادداشت‌ها -->
+        <div class="notes">
+            <strong>توضیحات:</strong>
+            <ul>
+                <li></li>
+                <li></li>
+                <li></li>
+
+            </ul>
+        </div>
+
+        <!-- فوتر -->
+        <div class="footer">
+            <p></p>
+        </div>
+    </div>
+
+    <!-- دکمه چاپ (فقط در مرورگر) -->
+    <div class="no-print" style="text-align: center; margin-top: 20px;">
+        <button onclick="window.print()" style="padding: 12px 24px; background: #1a237e; color: white; border: none; border-radius: 8px; cursor: pointer; font-size: 12pt; font-weight: bold;">
+            🖨️ چاپ پیش‌فاکتور
+        </button>
+        <a href="{% url 'customer_order_list' %}" style="padding: 12px 24px; background: #757575; color: white; border: none; border-radius: 8px; cursor: pointer; margin-right: 10px; font-size: 12pt; text-decoration: none; display: inline-block;">
+            ❌ بازگشت به سفارش‌ها
+        </a>
+    </div>
+</body>
+</html>
