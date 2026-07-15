@@ -6,3 +6,4 @@ cnc_archive/
 dr_archive/
 *.sqlite3
 staticfiles/
+media/
