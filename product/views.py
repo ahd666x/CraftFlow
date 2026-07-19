@@ -36,7 +36,7 @@ from .models import *
 from .forms import *
 from django.contrib.auth.decorators import login_required
 from django.contrib.auth.models import User
-from django.db.models import Q, Count, F, OuterRef, Subquery, IntegerField
+from django.db.models import Q, Count, F, OuterRef, Subquery, IntegerField, Exists
 from django.shortcuts import render
 from .decorators import staff_or_representative_required
 from .models import OrderItem, ProductCategory, Product, STATION_CHOICES, PackagingUnit
@@ -2919,5 +2919,694 @@ def customer_shipment_detail(request, plate, date):
         'total_price': total_price,
     }
     return render(request, 'customer/shipment_detail.html', context)
+
+
+# -------------------------------------------------------------------
+#     روند نقاشی و برنامه‌ریزی روزانه
+# -------------------------------------------------------------------
+
+@login_required
+@admin_or_manager_required
+def assign_painting_process(request, item_id):
+    """اختصاص روند نقاشی به یک آیتم سفارش (دستی)"""
+    from .models import (
+        PaintingProcess, ProductionTask, create_paint_tasks,
+    )
+
+    item = get_object_or_404(OrderItem, pk=item_id)
+    if request.method == 'POST':
+        process_id = request.POST.get('process_id')
+        process = get_object_or_404(PaintingProcess, pk=process_id, is_active=True)
+
+        base_part_ids = list(item.product.bom.values_list('part', flat=True))
+        ProductionTask.objects.filter(
+            order=item.order,
+            station_name='paint'
+        ).filter(
+            models.Q(order_item=item) | models.Q(part__in=base_part_ids) | models.Q(part__base_part__in=base_part_ids)
+        ).delete()
+
+        global_base = ProductionTask.objects.filter(order=item.order).aggregate(
+            max_step=models.Max('step_order')
+        )['max_step'] or 0
+
+        item_colors = {c.part: c.code for c in item.ordercolor.all()}
+        unique_color_parts = set()
+        for bom_entry in item.product.bom.all():
+            if bom_entry.color_part:
+                unique_color_parts.add(bom_entry.color_part)
+
+        new_tasks = []
+        for color_part in unique_color_parts:
+            color_code = item_colors.get(color_part)
+            if not color_code or color_code == 'nan':
+                continue
+
+            sample_part = item.product.bom.filter(color_part=color_part).first()
+            if not sample_part:
+                continue
+
+            create_paint_tasks(
+                new_tasks, item.order, sample_part.part, item.quantity,
+                process, global_base, order_item=item, color_part=color_part
+            )
+            global_base += len(process.stages.all())
+
+        if new_tasks:
+            ProductionTask.objects.bulk_create(new_tasks)
+        messages.success(request, f"روند نقاشی '{process.name}' برای آیتم {item.id} اعمال شد.")
+        return redirect('item_detail', pk=item_id)
+
+    processes = PaintingProcess.objects.filter(is_active=True)
+    return render(request, 'assign_painting.html', {'item': item, 'processes': processes})
+
+
+@login_required
+@admin_or_manager_required
+def daily_schedule_print(request):
+    """نمایش و چاپ برنامه روزانه کارگران نقاشی"""
+    from django.db.models import Sum
+    from .models import ProductionTask, WorkerProfile
+
+    date_str = request.GET.get('date')
+    if date_str:
+        try:
+            y, m, d = map(int, date_str.split('-'))
+            selected_date = jdatetime.date(y, m, d)
+        except (ValueError, TypeError):
+            selected_date = jdatetime.date.today()
+    else:
+        selected_date = jdatetime.date.today()
+
+    gregorian_date = selected_date.togregorian()
+
+    # واکشی یکجای همهٔ تسک‌های نقاشیِ برنامه‌ریزی‌شده در این روز
+    tasks = list(
+        ProductionTask.objects.filter(
+            station_name='paint',
+            scheduled_start__date=gregorian_date
+        ).select_related('order', 'order_item__order', 'order_item__product', 'part', 'painting_stage', 'assigned_worker')
+        .order_by('scheduled_start')
+    )
+
+    # گروه‌بندی بر اساس کارگر تخصیص‌یافته (با سطل «تخصیص‌نیافته»)
+    grouped = {}
+    for task in tasks:
+        worker = task.assigned_worker
+        key = worker.id if worker else None
+        grouped.setdefault(key, []).append(task)
+
+    workers_by_id = {
+        wp.user_id: wp.user
+        for wp in WorkerProfile.objects.filter(user_id__in=[k for k in grouped if k])
+    }
+
+    schedule_data = []
+    for worker_id, worker_tasks in grouped.items():
+        if worker_id:
+            worker = workers_by_id.get(worker_id)
+            label = worker.get_full_name() if worker else f"کارگر #{worker_id}"
+        else:
+            label = "تخصیص‌نیافته"
+        total_duration = sum(t.painting_stage.duration_minutes if t.painting_stage else 0 for t in worker_tasks)
+        schedule_data.append({
+            'worker_label': label,
+            'worker': workers_by_id.get(worker_id) if worker_id else None,
+            'tasks': worker_tasks,
+            'total_duration': total_duration,
+        })
+
+    context = {
+        'schedule_data': schedule_data,
+        'selected_date': selected_date,
+        'selected_date_str': selected_date.strftime('%Y/%m/%d'),
+        'gregorian_date': gregorian_date,
+        'today': jdatetime.date.today(),
+        'today_str': jdatetime.date.today().strftime('%Y/%m/%d'),
+        'yesterday': (selected_date - jdatetime.timedelta(days=1)).strftime('%Y-%m-%d'),
+        'tomorrow': (selected_date + jdatetime.timedelta(days=1)).strftime('%Y-%m-%d'),
+    }
+    return render(request, 'daily_schedule_print.html', context)
+
+
+@login_required
+@admin_or_manager_required
+def auto_assign_tasks_view(request):
+    """اجرای دستی تخصیص خودکار کارگران به تسک‌های نقاشی"""
+    if request.method == 'POST':
+        from .utils import auto_assign_paint_tasks
+        auto_assign_paint_tasks()
+        messages.success(request, "تخصیص خودکار کارگران انجام شد.")
+    return redirect('dashboard')
+
+
+# -------------------------------------------------------------------
+#     پنل مدیریت جامع نقاشی
+# -------------------------------------------------------------------
+
+@login_required
+@admin_or_manager_required
+def painting_management_dashboard(request):
+    """داشبورد مدیریت نقاشی - صفحه اصلی با خلاصه اطلاعات"""
+    from .utils import get_painting_ready_items_queryset, get_unscheduled_ready_items, painting_nav_context
+
+    recent_tasks = ProductionTask.objects.filter(
+        station_name='paint'
+    ).select_related('order', 'part', 'painting_stage', 'assigned_worker', 'order_item__product').order_by('-id')[:10]
+
+    context = {
+        'active_tab': 'dashboard',
+        'total_processes': PaintingProcess.objects.count(),
+        'active_processes': PaintingProcess.objects.filter(is_active=True).count(),
+        'total_stages': PaintingStage.objects.count(),
+        'total_workers': WorkerProfile.objects.filter(stage='paint').count(),
+        'pending_tasks': ProductionTask.objects.filter(station_name='paint', status__in=['pending', 'waiting']).count(),
+        'unassigned_tasks': ProductionTask.objects.filter(station_name='paint', assigned_worker__isnull=True, status__in=['pending', 'waiting']).count(),
+        'ready_items_count': get_painting_ready_items_queryset().count(),
+        'unscheduled_ready_count': get_unscheduled_ready_items().count(),
+        'recent_tasks': recent_tasks,
+        **painting_nav_context(),
+    }
+    return render(request, 'painting_management/dashboard.html', context)
+
+
+@login_required
+@admin_or_manager_required
+def painting_processes_view(request):
+    """مدیریت روندهای نقاشی (لیست، ایجاد، ویرایش، حذف)"""
+    from .models import PaintingProcess
+    from .forms import PaintingProcessForm
+
+    from .utils import painting_nav_context
+
+    if request.method == 'POST' and request.headers.get('X-Requested-With') == 'XMLHttpRequest':
+        action = request.POST.get('action')
+
+        if action == 'create':
+            form = PaintingProcessForm(request.POST)
+            if form.is_valid():
+                process = form.save()
+                return JsonResponse({'success': True, 'id': process.id, 'name': process.name})
+            return JsonResponse({'success': False, 'errors': form.errors})
+
+        elif action == 'edit':
+            process_id = request.POST.get('process_id')
+            process = get_object_or_404(PaintingProcess, pk=process_id)
+            form = PaintingProcessForm(request.POST, instance=process)
+            if form.is_valid():
+                form.save()
+                return JsonResponse({'success': True})
+            return JsonResponse({'success': False, 'errors': form.errors})
+
+        elif action == 'delete':
+            process_id = request.POST.get('process_id')
+            process = get_object_or_404(PaintingProcess, pk=process_id)
+            process.delete()
+            return JsonResponse({'success': True})
+
+        elif action == 'toggle_active':
+            process_id = request.POST.get('process_id')
+            process = get_object_or_404(PaintingProcess, pk=process_id)
+            process.is_active = not process.is_active
+            process.save()
+            return JsonResponse({'success': True, 'is_active': process.is_active})
+
+    # GET: نمایش لیست
+    processes = PaintingProcess.objects.all().annotate(stage_count=Count('stages')).order_by('-is_active', 'name')
+
+    # جستجو
+    search = request.GET.get('search')
+    if search:
+        processes = processes.filter(Q(name__icontains=search) | Q(code__icontains=search))
+
+    paginator = Paginator(processes, 20)
+    page_number = request.GET.get('page')
+    page_obj = paginator.get_page(page_number)
+
+    context = {
+        'active_tab': 'processes',
+        'processes': page_obj,
+        'search': search,
+        'form': PaintingProcessForm(),
+        **painting_nav_context(),
+    }
+    return render(request, 'painting_management/processes.html', context)
+
+
+@login_required
+@admin_or_manager_required
+def painting_process_detail_api(request, process_id):
+    """بازگرداندن داده‌های یک روند برای فرم ویرایش (AJAX)"""
+    from .models import PaintingProcess
+
+    process = get_object_or_404(PaintingProcess, pk=process_id)
+    return JsonResponse({
+        'id': process.id,
+        'name': process.name,
+        'code': process.code,
+        'color_codes': process.color_codes or [],
+        'is_active': process.is_active,
+        'description': process.description or '',
+    })
+
+
+@login_required
+@admin_or_manager_required
+def painting_stages_view(request, process_id=None):
+    """مدیریت مراحل نقاشی برای یک روند خاص"""
+    from .models import PaintingProcess, PaintingStage
+    from .forms import PaintingStageForm
+
+    from .utils import painting_nav_context
+
+    process = None
+    if process_id:
+        process = get_object_or_404(PaintingProcess, pk=process_id)
+
+    if request.method == 'POST' and request.headers.get('X-Requested-With') == 'XMLHttpRequest':
+        action = request.POST.get('action')
+
+        if action == 'create':
+            form = PaintingStageForm(request.POST)
+            if form.is_valid():
+                stage = form.save()
+                return JsonResponse({'success': True, 'id': stage.id, 'name': stage.name})
+            return JsonResponse({'success': False, 'errors': form.errors})
+
+        elif action == 'edit':
+            stage_id = request.POST.get('stage_id')
+            stage = get_object_or_404(PaintingStage, pk=stage_id)
+            form = PaintingStageForm(request.POST, instance=stage)
+            if form.is_valid():
+                form.save()
+                return JsonResponse({'success': True})
+            return JsonResponse({'success': False, 'errors': form.errors})
+
+        elif action == 'delete':
+            stage_id = request.POST.get('stage_id')
+            stage = get_object_or_404(PaintingStage, pk=stage_id)
+            stage.delete()
+            return JsonResponse({'success': True})
+
+        elif action == 'reorder':
+            # تغییر ترتیب مراحل
+            stage_ids = request.POST.getlist('stage_ids[]')
+            with transaction.atomic():
+                for idx, stage_id in enumerate(stage_ids, start=1):
+                    stage = PaintingStage.objects.get(pk=stage_id)
+                    stage.order = idx
+                    stage.save()
+            return JsonResponse({'success': True})
+
+    # GET: نمایش لیست مراحل
+    stages = PaintingStage.objects.all()
+    if process:
+        stages = stages.filter(process=process)
+    stages = stages.select_related('process').order_by('process__name', 'order')
+
+    # جستجو
+    search = request.GET.get('search')
+    if search:
+        stages = stages.filter(Q(name__icontains=search) | Q(process__name__icontains=search))
+
+    paginator = Paginator(stages, 20)
+    page_number = request.GET.get('page')
+    page_obj = paginator.get_page(page_number)
+
+    context = {
+        'active_tab': 'stages',
+        'stages': page_obj,
+        'process': process,
+        'search': search,
+        'form': PaintingStageForm(),
+        'processes': PaintingProcess.objects.all(),
+        **painting_nav_context(),
+    }
+    return render(request, 'painting_management/stages.html', context)
+
+
+@login_required
+@admin_or_manager_required
+def painting_stage_detail_api(request, stage_id):
+    """بازگرداندن داده‌های یک مرحله برای فرم ویرایش (AJAX)"""
+    from .models import PaintingStage
+
+    stage = get_object_or_404(PaintingStage, pk=stage_id)
+    return JsonResponse({
+        'id': stage.id,
+        'process': stage.process_id,
+        'order': stage.order,
+        'name': stage.name,
+        'duration_minutes': stage.duration_minutes,
+        'drying_time_minutes': stage.drying_time_minutes,
+        'required_skill': stage.required_skill,
+    })
+
+
+@login_required
+@admin_or_manager_required
+def painting_workers_view(request):
+    """مدیریت کارگران نقاشی و مهارت‌هایشان"""
+    import json
+    from .models import WorkerProfile
+    from .forms import WorkerProfileForm
+
+    from .utils import painting_nav_context
+
+    if request.method == 'POST' and request.headers.get('X-Requested-With') == 'XMLHttpRequest':
+        action = request.POST.get('action')
+
+        if action == 'create':
+            form = WorkerProfileForm(request.POST)
+            if form.is_valid():
+                worker = form.save()
+                return JsonResponse({'success': True, 'id': worker.id, 'name': worker.user.username})
+            return JsonResponse({'success': False, 'errors': form.errors})
+
+        elif action == 'edit':
+            worker_id = request.POST.get('worker_id')
+            worker = get_object_or_404(WorkerProfile, pk=worker_id)
+            form = WorkerProfileForm(request.POST, instance=worker)
+            if form.is_valid():
+                form.save()
+                return JsonResponse({'success': True})
+            return JsonResponse({'success': False, 'errors': form.errors})
+
+        elif action == 'delete':
+            worker_id = request.POST.get('worker_id')
+            worker = get_object_or_404(WorkerProfile, pk=worker_id)
+            worker.delete()
+            return JsonResponse({'success': True})
+
+        elif action == 'assign_skills':
+            # به‌روزرسانی JSON مهارت‌ها
+            worker_id = request.POST.get('worker_id')
+            worker = get_object_or_404(WorkerProfile, pk=worker_id)
+            skills = request.POST.get('skills', '[]')
+            try:
+                worker.skills = json.loads(skills)
+                worker.save()
+                return JsonResponse({'success': True})
+            except json.JSONDecodeError:
+                return JsonResponse({'success': False, 'error': 'فرمت JSON نامعتبر'})
+
+    # GET: نمایش لیست کارگران
+    workers = WorkerProfile.objects.filter(stage='paint').select_related('user').annotate(
+        active_tasks=Count(
+            'user__assigned_tasks',
+            filter=Q(user__assigned_tasks__station_name='paint', user__assigned_tasks__status__in=['pending', 'waiting'])
+        )
+    ).order_by('user__username')
+
+    # جستجو
+    search = request.GET.get('search')
+    if search:
+        workers = workers.filter(
+            Q(user__username__icontains=search)
+            | Q(user__first_name__icontains=search)
+            | Q(user__last_name__icontains=search)
+        )
+
+    paginator = Paginator(workers, 20)
+    page_number = request.GET.get('page')
+    page_obj = paginator.get_page(page_number)
+
+    context = {
+        'active_tab': 'workers',
+        'workers': page_obj,
+        'search': search,
+        'form': WorkerProfileForm(),
+        'skill_choices': PaintingStage.SKILL_CHOICES,
+        **painting_nav_context(),
+    }
+    return render(request, 'painting_management/workers.html', context)
+
+
+@login_required
+@admin_or_manager_required
+def painting_schedule_view(request):
+    """برنامه‌ریزی و تخصیص کارگران به تسک‌های نقاشی"""
+    from .utils import get_unscheduled_ready_items, parse_jalali_date, painting_nav_context
+
+    date_str = request.GET.get('date')
+    selected_date = parse_jalali_date(date_str)
+    gregorian_date = selected_date.togregorian()
+
+    tasks = list(
+        ProductionTask.objects.filter(
+            station_name='paint',
+            scheduled_start__date=gregorian_date,
+        ).select_related(
+            'order_item__order', 'order_item__product', 'painting_stage', 'assigned_worker',
+        ).prefetch_related('order_item__ordercolor').order_by('assigned_worker', 'scheduled_start')
+    )
+
+    grouped_tasks = {}
+    for task in tasks:
+        if task.assigned_worker:
+            label = task.assigned_worker.get_full_name() or task.assigned_worker.username
+        else:
+            label = 'تخصیص نشده'
+        grouped_tasks.setdefault(label, []).append(task)
+
+    workers = WorkerProfile.objects.filter(stage='paint').select_related('user')
+
+    from collections import defaultdict
+    workers_by_skill = defaultdict(list)
+    for wp in workers:
+        for skill in (wp.skills or []):
+            workers_by_skill[skill].append(wp)
+
+    unassigned_tasks = list(
+        ProductionTask.objects.filter(
+            station_name='paint',
+            assigned_worker__isnull=True,
+            status__in=['pending', 'waiting'],
+            scheduled_start__date=gregorian_date,
+        ).select_related(
+            'order_item__order', 'order_item__product', 'painting_stage',
+        ).prefetch_related('order_item__ordercolor').order_by('scheduled_start', 'step_order')
+    )
+
+    ready_unscheduled = get_unscheduled_ready_items()
+
+    stats = {
+        'total_tasks': len(tasks),
+        'assigned_tasks': sum(1 for t in tasks if t.assigned_worker),
+        'unassigned_tasks': len(unassigned_tasks),
+        'ready_unscheduled': ready_unscheduled.count(),
+        'total_duration': sum(t.painting_stage.duration_minutes if t.painting_stage else 0 for t in tasks),
+    }
+
+    context = {
+        'active_tab': 'schedule',
+        'grouped_tasks': grouped_tasks,
+        'unassigned_tasks': unassigned_tasks,
+        'ready_unscheduled': ready_unscheduled,
+        'selected_date': selected_date,
+        'selected_date_str': selected_date.strftime('%Y-%m-%d'),
+        'selected_date_display': selected_date.strftime('%Y/%m/%d'),
+        'workers': workers,
+        'workers_by_skill': dict(workers_by_skill),
+        'stats': stats,
+        'yesterday': (selected_date - jdatetime.timedelta(days=1)).strftime('%Y-%m-%d'),
+        'tomorrow': (selected_date + jdatetime.timedelta(days=1)).strftime('%Y-%m-%d'),
+        'schedule_date': selected_date.strftime('%Y-%m-%d'),
+        **painting_nav_context(),
+    }
+    return render(request, 'painting_management/schedule.html', context)
+
+
+@login_required
+@admin_or_manager_required
+def painting_ready_list(request):
+    """آیتم‌های آماده نقاشی (لاگ mon + تسک pending)"""
+    from .utils import get_painting_ready_items_queryset, painting_nav_context
+
+    search = request.GET.get('search')
+    process_id = request.GET.get('process')
+
+    ready_items = get_painting_ready_items_queryset(search=search, process_id=process_id)
+
+    context = {
+        'active_tab': 'ready',
+        'items': ready_items,
+        'search': search,
+        'processes': PaintingProcess.objects.filter(is_active=True),
+        'selected_process': process_id,
+        'schedule_date': jdatetime.date.today().strftime('%Y-%m-%d'),
+        **painting_nav_context(),
+    }
+    return render(request, 'painting_management/ready_list.html', context)
+
+
+@login_required
+@admin_or_manager_required
+def painting_add_to_schedule(request):
+    """افزودن آیتم‌های انتخاب‌شده به برنامه روزانه (AJAX)"""
+    from .utils import parse_jalali_date, schedule_paint_items_for_date
+
+    if request.method != 'POST' or request.headers.get('X-Requested-With') != 'XMLHttpRequest':
+        return JsonResponse({'success': False, 'error': 'درخواست نامعتبر'})
+
+    item_ids = request.POST.getlist('item_ids[]') or request.POST.getlist('item_ids')
+    if not item_ids:
+        return JsonResponse({'success': False, 'error': 'هیچ آیتمی انتخاب نشده است'})
+
+    try:
+        target_date = parse_jalali_date(request.POST.get('date'))
+    except ValueError as exc:
+        return JsonResponse({'success': False, 'error': str(exc)})
+
+    try:
+        count = schedule_paint_items_for_date(item_ids, target_date)
+        if count == 0:
+            return JsonResponse({'success': False, 'error': 'آیتم انتخاب‌شده واجد شرایط نیست یا قبلاً برنامه‌ریزی شده'})
+        return JsonResponse({
+            'success': True,
+            'message': f'{count} تسک به برنامه {target_date.strftime("%Y/%m/%d")} اضافه شد.',
+            'scheduled_count': count,
+            'redirect': reverse('painting_schedule') + f'?date={target_date.strftime("%Y-%m-%d")}',
+        })
+    except Exception as e:
+        return JsonResponse({'success': False, 'error': str(e)})
+
+
+@login_required
+@admin_or_manager_required
+def painting_assign_process(request):
+    """تخصیص دستی روند نقاشی به یک آیتم سفارش (AJAX)"""
+    from .models import OrderItem, PaintingProcess, ProductionTask, create_paint_tasks
+
+    if request.method == 'POST' and request.headers.get('X-Requested-With') == 'XMLHttpRequest':
+        item_id = request.POST.get('item_id')
+        process_id = request.POST.get('process_id')
+
+        if not item_id or not process_id:
+            return JsonResponse({'success': False, 'error': 'اطلاعات ناقص'})
+
+        item = get_object_or_404(OrderItem, pk=item_id)
+        process = get_object_or_404(PaintingProcess, pk=process_id, is_active=True)
+
+        try:
+            with transaction.atomic():
+                base_part_ids = list(item.product.bom.values_list('part', flat=True))
+                ProductionTask.objects.filter(
+                    order=item.order,
+                    station_name='paint'
+                ).filter(
+                    Q(part__in=base_part_ids) | Q(part__base_part__in=base_part_ids)
+                ).delete()
+
+                global_base = ProductionTask.objects.filter(order=item.order).aggregate(
+                    max_step=models.Max('step_order')
+                )['max_step'] or 0
+
+                item_colors = {c.part: c.code for c in item.ordercolor.all()}
+                unique_color_parts = set()
+                for bom_entry in item.product.bom.all():
+                    if bom_entry.color_part:
+                        unique_color_parts.add(bom_entry.color_part)
+
+                new_tasks = []
+                for color_part in unique_color_parts:
+                    color_code = item_colors.get(color_part)
+                    if not color_code or color_code == 'nan':
+                        continue
+
+                    sample_part = item.product.bom.filter(color_part=color_part).first()
+                    if not sample_part:
+                        continue
+
+                    create_paint_tasks(
+                        new_tasks, item.order, sample_part.part, item.quantity,
+                        process, global_base, order_item=item, color_part=color_part
+                    )
+                    global_base += len(process.stages.all())
+
+                if new_tasks:
+                    ProductionTask.objects.bulk_create(new_tasks)
+
+                return JsonResponse({'success': True, 'message': f'روند {process.name} با موفقیت اعمال شد.'})
+        except Exception as e:
+            return JsonResponse({'success': False, 'error': str(e)})
+
+    return JsonResponse({'success': False, 'error': 'درخواست نامعتبر'})
+
+
+@login_required
+@admin_or_manager_required
+def painting_auto_assign(request):
+    """اجرای تخصیص خودکار کارگران (AJAX)"""
+    from .utils import auto_assign_paint_tasks, parse_jalali_date
+
+    if request.method == 'POST' and request.headers.get('X-Requested-With') == 'XMLHttpRequest':
+        try:
+            target_date = None
+            if request.POST.get('date'):
+                target_date = parse_jalali_date(request.POST.get('date'))
+
+            auto_assign_paint_tasks(target_date=target_date)
+
+            assigned_qs = ProductionTask.objects.filter(
+                station_name='paint',
+                assigned_worker__isnull=False,
+                status__in=['pending', 'waiting'],
+            )
+            if target_date:
+                assigned_qs = assigned_qs.filter(scheduled_start__date=target_date.togregorian())
+
+            return JsonResponse({
+                'success': True,
+                'message': 'تخصیص خودکار با موفقیت انجام شد.',
+                'assigned_count': assigned_qs.count(),
+            })
+        except Exception as e:
+            return JsonResponse({'success': False, 'error': str(e)})
+
+    return JsonResponse({'success': False, 'error': 'درخواست نامعتبر'})
+
+
+@login_required
+@admin_or_manager_required
+def painting_get_available_workers(request):
+    """دریافت لیست کارگران با مهارت خاص (AJAX) برای انتخاب دستی"""
+    from .models import WorkerProfile
+
+    skill = request.GET.get('skill')
+    if not skill:
+        return JsonResponse({'workers': []})
+
+    # فیلتر در سمت پایتون (skills__contains روی SQLite پشتیبانی نمی‌شود)
+    workers = WorkerProfile.objects.filter(stage='paint').select_related('user')
+    data = [{
+        'id': w.user.id,
+        'name': w.user.get_full_name() or w.user.username,
+        'active_tasks': w.user.assigned_tasks.filter(status__in=['pending', 'waiting']).count()
+    } for w in workers if skill in (w.skills or [])]
+
+    return JsonResponse({'workers': data})
+
+
+@login_required
+@admin_or_manager_required
+def painting_assign_worker(request):
+    """تخصیص دستی یک کارگر به یک تسک نقاشی (AJAX)"""
+    from .models import ProductionTask
+    from django.contrib.auth.models import User
+
+    if request.method == 'POST' and request.headers.get('X-Requested-With') == 'XMLHttpRequest':
+        task_id = request.POST.get('task_id')
+        worker_id = request.POST.get('worker_id')
+        if not task_id or not worker_id:
+            return JsonResponse({'success': False, 'error': 'اطلاعات ناقص'})
+
+        task = get_object_or_404(ProductionTask, pk=task_id, station_name='paint')
+        worker_user = get_object_or_404(User, pk=worker_id)
+        task.assigned_worker = worker_user
+        task.save()
+        return JsonResponse({'success': True})
+
+    return JsonResponse({'success': False, 'error': 'درخواست نامعتبر'})
 
 

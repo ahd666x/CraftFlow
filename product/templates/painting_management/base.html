@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block extra_css %}
+<style>
+    .painting-nav .nav-link { font-size: 0.9rem; }
+    .painting-nav .nav-link.active { font-weight: 600; }
+    .hover-card { transition: transform 0.2s, box-shadow 0.2s; }
+    .hover-card:hover {
+        transform: translateY(-4px);
+        box-shadow: 0 0.5rem 1rem rgba(0,0,0,0.12) !important;
+    }
+    .schedule-toolbar { background: #f8fafc; border-radius: 0.5rem; padding: 0.75rem 1rem; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid mt-4"
+     id="painting-app"
+     data-auto-assign-url="{% url 'painting_auto_assign' %}"
+     data-add-schedule-url="{% url 'painting_add_to_schedule' %}"
+     data-assign-worker-url="{% url 'painting_assign_worker' %}"
+     data-csrf="{{ csrf_token }}"
+     data-schedule-date="{{ schedule_date|default:'' }}">
+    {% include "painting_management/_nav.html" %}
+    {% block painting_content %}{% endblock %}
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script src="{% static 'painting_management/js/main.js' %}"></script>
+{% block painting_js %}{% endblock %}
+{% endblock %}

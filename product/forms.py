@@ -1,6 +1,6 @@
 # forms.py
 from django import forms
-from .models import Order, OrderItem, Color, ProductCategory
+from .models import Order, OrderItem, Color, ProductCategory, PaintingProcess, PaintingStage, WorkerProfile
 from django.contrib.auth.models import User
 
 import ast
@@ -542,6 +542,93 @@ class PartForm(forms.ModelForm):
             'base_part': 'قطعه پایه',
         }
 
+
+
+# ===================== فرم‌های مدیریت نقاشی =====================
+
+class PaintingProcessForm(forms.ModelForm):
+    class Meta:
+        model = PaintingProcess
+        fields = ['name', 'code', 'color_codes', 'is_active', 'description']
+        widgets = {
+            'name': forms.TextInput(attrs={'class': 'form-control'}),
+            'code': forms.TextInput(attrs={'class': 'form-control'}),
+            'color_codes': forms.Textarea(attrs={'class': 'form-control', 'rows': 2, 'placeholder': '["8","9","10","11"]'}),
+            'is_active': forms.CheckboxInput(attrs={'class': 'form-check-input'}),
+            'description': forms.Textarea(attrs={'class': 'form-control', 'rows': 3}),
+        }
+        help_texts = {
+            'color_codes': 'لیست کدهای رنگی را به فرمت JSON وارد کنید. مثال: ["8","9","10","11"]',
+        }
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fields['color_codes'].required = False
+        self.fields['description'].required = False
+
+    def clean_color_codes(self):
+        import json
+        value = self.cleaned_data.get('color_codes')
+        if not value:
+            return []
+        try:
+            parsed = json.loads(value)
+            return parsed if isinstance(parsed, list) else [parsed]
+        except (json.JSONDecodeError, TypeError):
+            raise forms.ValidationError('فرمت JSON نامعتبر است. مثال: ["8","9"]')
+
+
+class PaintingStageForm(forms.ModelForm):
+    class Meta:
+        model = PaintingStage
+        fields = ['process', 'order', 'name', 'duration_minutes', 'drying_time_minutes', 'required_skill']
+        widgets = {
+            'process': forms.Select(attrs={'class': 'form-select'}),
+            'order': forms.NumberInput(attrs={'class': 'form-control', 'min': 1}),
+            'name': forms.TextInput(attrs={'class': 'form-control'}),
+            'duration_minutes': forms.NumberInput(attrs={'class': 'form-control', 'min': 1}),
+            'drying_time_minutes': forms.NumberInput(attrs={'class': 'form-control', 'min': 0}),
+            'required_skill': forms.Select(attrs={'class': 'form-select'}),
+        }
+
+
+class WorkerProfileForm(forms.ModelForm):
+    class Meta:
+        model = WorkerProfile
+        fields = ['user', 'stage', 'skills', 'skill_costs']
+        widgets = {
+            'user': forms.Select(attrs={'class': 'form-select'}),
+            'stage': forms.Select(attrs={'class': 'form-select'}),
+            'skills': forms.Textarea(attrs={'class': 'form-control', 'rows': 2, 'placeholder': '["painter","sealer"]'}),
+            'skill_costs': forms.Textarea(attrs={'class': 'form-control', 'rows': 2, 'placeholder': '{"painter":3, "sealer":4}'}),
+        }
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fields['skills'].required = False
+        self.fields['skill_costs'].required = False
+
+    def clean_skills(self):
+        import json
+        value = self.cleaned_data.get('skills')
+        if not value:
+            return []
+        try:
+            parsed = json.loads(value)
+            return parsed if isinstance(parsed, list) else [parsed]
+        except (json.JSONDecodeError, TypeError):
+            raise forms.ValidationError('فرمت JSON نامعتبر است. مثال: ["painter","sealer"]')
+
+    def clean_skill_costs(self):
+        import json
+        value = self.cleaned_data.get('skill_costs')
+        if not value:
+            return {}
+        try:
+            parsed = json.loads(value)
+            return parsed if isinstance(parsed, dict) else {}
+        except (json.JSONDecodeError, TypeError):
+            raise forms.ValidationError('فرمت JSON نامعتبر است. مثال: {"painter":3}')
 
 
 

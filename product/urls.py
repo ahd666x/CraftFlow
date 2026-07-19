@@ -116,6 +116,27 @@ urlpatterns = [
     path('shipping/set-plate/', views.set_plate, name='set_plate'),
 
 
+    path('item/<int:item_id>/assign-painting/', views.assign_painting_process, name='assign_painting_process'),
+    path('schedule/daily-print/', views.daily_schedule_print, name='daily_schedule_print'),
+    path('schedule/auto-assign/', views.auto_assign_tasks_view, name='auto_assign_tasks'),
+
+    # پنل مدیریت نقاشی
+    path('painting/dashboard/', views.painting_management_dashboard, name='painting_dashboard'),
+    path('painting/processes/', views.painting_processes_view, name='painting_processes'),
+    path('painting/processes/<int:process_id>/get/', views.painting_process_detail_api, name='painting_process_detail'),
+    path('painting/stages/', views.painting_stages_view, name='painting_stages'),
+    path('painting/stages/<int:process_id>/', views.painting_stages_view, name='painting_stages_process'),
+    path('painting/stages/<int:stage_id>/get/', views.painting_stage_detail_api, name='painting_stage_detail'),
+    path('painting/workers/', views.painting_workers_view, name='painting_workers'),
+    path('painting/schedule/', views.painting_schedule_view, name='painting_schedule'),
+    path('painting/ready-list/', views.painting_ready_list, name='painting_ready_list'),
+    path('painting/add-to-schedule/', views.painting_add_to_schedule, name='painting_add_to_schedule'),
+    path('painting/assign-process/', views.painting_assign_process, name='painting_assign_process'),
+    path('painting/auto-assign/', views.painting_auto_assign, name='painting_auto_assign'),
+    path('painting/available-workers/', views.painting_get_available_workers, name='painting_available_workers'),
+    path('painting/assign-worker/', views.painting_assign_worker, name='painting_assign_worker'),
+
+
     path('customer/shipments/', views.customer_shipments, name='customer_shipments'),
     path('customer/shipments/<str:plate>/<str:date>/', views.customer_shipment_detail, name='customer_shipment_detail'),
 

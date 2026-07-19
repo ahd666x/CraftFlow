@@ -1,0 +1,24 @@
+{% extends "painting_management/base.html" %}
+{% block title %}اختصاص روند نقاشی{% endblock %}
+
+{% block painting_content %}
+<div class="container mt-4">
+    <h2>انتخاب روند نقاشی برای آیتم {{ item.id }}</h2>
+    <p>محصول: {{ item.product.name }} | سفارش: {{ item.order.id }}</p>
+    <form method="post">
+        {% csrf_token %}
+        <div class="form-group">
+            <label>روند نقاشی</label>
+            <select name="process_id" class="form-select">
+                {% for p in processes %}
+                    <option value="{{ p.id }}">{{ p.name }} ({{ p.code }})</option>
+                {% empty %}
+                    <option value="">هیچ روند فعالی وجود ندارد</option>
+                {% endfor %}
+            </select>
+        </div>
+        <button type="submit" class="btn btn-primary mt-3">اعمال روند</button>
+        <a href="{% url 'item_detail' item.id %}" class="btn btn-secondary mt-3">بازگشت</a>
+    </form>
+</div>
+{% endblock %}

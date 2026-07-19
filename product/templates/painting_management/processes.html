@@ -1,0 +1,175 @@
+{% extends "painting_management/base.html" %}
+{% block title %}مدیریت روندهای نقاشی{% endblock %}
+
+{% block painting_content %}
+<div class="container-fluid mt-4">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h2>📋 مدیریت روندهای نقاشی</h2>
+        <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#processModal">
+            <i class="bi bi-plus-circle"></i> روند جدید
+        </button>
+    </div>
+
+    <!-- فیلتر و جستجو -->
+    <div class="row mb-3">
+        <div class="col-md-6">
+            <form method="get" class="d-flex">
+                <input type="text" name="search" class="form-control me-2" placeholder="جستجو..." value="{{ search }}">
+                <button type="submit" class="btn btn-outline-secondary">جستجو</button>
+            </form>
+        </div>
+    </div>
+
+    <!-- جدول روندها -->
+    <div class="table-responsive">
+        <table class="table table-hover">
+            <thead>
+                <tr>
+                    <th>نام</th>
+                    <th>کد</th>
+                    <th>کدهای رنگی</th>
+                    <th>تعداد مراحل</th>
+                    <th>وضعیت</th>
+                    <th>عملیات</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for process in processes %}
+                <tr data-id="{{ process.id }}">
+                    <td>{{ process.name }}</td>
+                    <td><code>{{ process.code }}</code></td>
+                    <td>{{ process.color_codes|join:", " }}</td>
+                    <td>{{ process.stage_count }}</td>
+                    <td>
+                        <span class="badge bg-{% if process.is_active %}success{% else %}danger{% endif %}">
+                            {% if process.is_active %}فعال{% else %}غیرفعال{% endif %}
+                        </span>
+                    </td>
+                    <td>
+                        <button class="btn btn-sm btn-outline-primary edit-process" data-id="{{ process.id }}">
+                            <i class="bi bi-pencil"></i>
+                        </button>
+                        <button class="btn btn-sm btn-outline-warning toggle-process" data-id="{{ process.id }}">
+                            <i class="bi bi-arrow-repeat"></i>
+                        </button>
+                        <button class="btn btn-sm btn-outline-danger delete-process" data-id="{{ process.id }}">
+                            <i class="bi bi-trash"></i>
+                        </button>
+                        <a href="{% url 'painting_stages_process' process.id %}" class="btn btn-sm btn-outline-info">
+                            <i class="bi bi-list-ul"></i> مراحل
+                        </a>
+                    </td>
+                </tr>
+                {% empty %}
+                <tr><td colspan="6" class="text-center">هیچ روندی یافت نشد</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+    <!-- صفحه‌بندی -->
+    {% if processes.has_other_pages %}
+    <nav>
+        <ul class="pagination justify-content-center">
+            {% if processes.has_previous %}
+            <li class="page-item"><a class="page-link" href="?page=1">&laquo;</a></li>
+            <li class="page-item"><a class="page-link" href="?page={{ processes.previous_page_number }}">قبلی</a></li>
+            {% endif %}
+            <li class="page-item active"><span class="page-link">{{ processes.number }}</span></li>
+            {% if processes.has_next %}
+            <li class="page-item"><a class="page-link" href="?page={{ processes.next_page_number }}">بعدی</a></li>
+            <li class="page-item"><a class="page-link" href="?page={{ processes.paginator.num_pages }}">&raquo;</a></li>
+            {% endif %}
+        </ul>
+    </nav>
+    {% endif %}
+</div>
+
+<!-- مودال ایجاد/ویرایش -->
+<div class="modal fade" id="processModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <form id="processForm" method="post" action="{% url 'painting_processes' %}">
+                {% csrf_token %}
+                <input type="hidden" name="action" id="formAction" value="create">
+                <input type="hidden" name="process_id" id="processId">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="modalTitle">روند جدید</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    {{ form.as_p }}
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">انصراف</button>
+                    <button type="submit" class="btn btn-primary">ذخیره</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block painting_js %}
+<script>
+$(function () {
+    // ایجاد/ویرایش (ارسال فرم به صورت AJAX)
+    $('#processForm').on('submit', function (e) {
+        e.preventDefault();
+        var $form = $(this);
+        $.ajax({
+            url: $form.attr('action'),
+            method: 'POST',
+            headers: {'X-Requested-With': 'XMLHttpRequest'},
+            data: $form.serialize(),
+            success: function (data) {
+                if (data.success) { location.reload(); }
+                else { alert('خطا: ' + JSON.stringify(data.errors || data)); }
+            },
+            error: function () { alert('خطای ارتباط با سرور'); }
+        });
+    });
+
+    // ویرایش
+    $('.edit-process').on('click', function () {
+        var id = $(this).data('id');
+        $.getJSON('{% url "painting_process_detail" 0 %}'.replace('/0/', '/' + id + '/'), function (data) {
+            $('#modalTitle').text('ویرایش روند');
+            $('#formAction').val('edit');
+            $('#processId').val(data.id);
+            $('#processForm [name="name"]').val(data.name);
+            $('#processForm [name="code"]').val(data.code);
+            $('#processForm [name="color_codes"]').val(JSON.stringify(data.color_codes));
+            $('#processForm [name="description"]').val(data.description);
+            $('#processForm [name="is_active"]').prop('checked', data.is_active);
+            new bootstrap.Modal(document.getElementById('processModal')).show();
+        });
+    });
+
+    // حذف
+    $('.delete-process').on('click', function () {
+        if (!confirm('آیا از حذف این روند اطمینان دارید؟')) return;
+        var id = $(this).data('id');
+        $.ajax({
+            url: '{% url "painting_processes" %}',
+            method: 'POST',
+            headers: {'X-Requested-With': 'XMLHttpRequest'},
+            data: {'csrfmiddlewaretoken': '{{ csrf_token }}', 'action': 'delete', 'process_id': id},
+            success: function (data) { if (data.success) location.reload(); }
+        });
+    });
+
+    // تغییر وضعیت
+    $('.toggle-process').on('click', function () {
+        var id = $(this).data('id');
+        $.ajax({
+            url: '{% url "painting_processes" %}',
+            method: 'POST',
+            headers: {'X-Requested-With': 'XMLHttpRequest'},
+            data: {'csrfmiddlewaretoken': '{{ csrf_token }}', 'action': 'toggle_active', 'process_id': id},
+            success: function (data) { if (data.success) location.reload(); }
+        });
+    });
+});
+</script>
+{% endblock %}

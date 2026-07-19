@@ -1,0 +1,161 @@
+{% extends "painting_management/base.html" %}
+{% block title %}مدیریت کارگران نقاشی{% endblock %}
+
+{% block painting_content %}
+<div class="container-fluid mt-4">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h2>👷 مدیریت کارگران نقاشی</h2>
+        <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#workerModal">
+            <i class="bi bi-plus-circle"></i> کارگر جدید
+        </button>
+    </div>
+
+    <!-- فیلتر و جستجو -->
+    <div class="row mb-3">
+        <div class="col-md-6">
+            <form method="get" class="d-flex">
+                <input type="text" name="search" class="form-control me-2" placeholder="جستجو..." value="{{ search }}">
+                <button type="submit" class="btn btn-outline-secondary">جستجو</button>
+            </form>
+        </div>
+    </div>
+
+    <div class="table-responsive">
+        <table class="table table-hover">
+            <thead>
+                <tr>
+                    <th>نام کاربری</th>
+                    <th>ایستگاه</th>
+                    <th>مهارت‌ها</th>
+                    <th>هزینه‌های ترجیحی</th>
+                    <th>تسک‌های فعال</th>
+                    <th>عملیات</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for worker in workers %}
+                <tr data-id="{{ worker.id }}">
+                    <td>{{ worker.user.get_full_name|default:worker.user.username }}</td>
+                    <td>{{ worker.get_stage_display }}</td>
+                    <td>
+                        {% for skill in worker.skills %}
+                            <span class="badge bg-info">{{ skill }}</span>
+                        {% empty %}-{% endfor %}
+                    </td>
+                    <td><code>{{ worker.skill_costs }}</code></td>
+                    <td>{{ worker.active_tasks }}</td>
+                    <td>
+                        <button class="btn btn-sm btn-outline-primary edit-worker" data-id="{{ worker.id }}">
+                            <i class="bi bi-pencil"></i>
+                        </button>
+                        <button class="btn btn-sm btn-outline-danger delete-worker" data-id="{{ worker.id }}">
+                            <i class="bi bi-trash"></i>
+                        </button>
+                    </td>
+                </tr>
+                {% empty %}
+                <tr><td colspan="6" class="text-center">هیچ کارگری یافت نشد</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+    <!-- صفحه‌بندی -->
+    {% if workers.has_other_pages %}
+    <nav>
+        <ul class="pagination justify-content-center">
+            {% if workers.has_previous %}
+            <li class="page-item"><a class="page-link" href="?page=1">&laquo;</a></li>
+            <li class="page-item"><a class="page-link" href="?page={{ workers.previous_page_number }}">قبلی</a></li>
+            {% endif %}
+            <li class="page-item active"><span class="page-link">{{ workers.number }}</span></li>
+            {% if workers.has_next %}
+            <li class="page-item"><a class="page-link" href="?page={{ workers.next_page_number }}">بعدی</a></li>
+            <li class="page-item"><a class="page-link" href="?page={{ workers.paginator.num_pages }}">&raquo;</a></li>
+            {% endif %}
+        </ul>
+    </nav>
+    {% endif %}
+</div>
+
+<!-- مودال ایجاد/ویرایش -->
+<div class="modal fade" id="workerModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <form id="workerForm" method="post" action="{% url 'painting_workers' %}">
+                {% csrf_token %}
+                <input type="hidden" name="action" id="workerAction" value="create">
+                <input type="hidden" name="worker_id" id="workerId">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="workerModalTitle">کارگر جدید</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    {{ form.as_p }}
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">انصراف</button>
+                    <button type="submit" class="btn btn-primary">ذخیره</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- نمایش راهنمای مهارت‌ها -->
+<div class="container-fluid">
+    <div class="text-muted small">
+        مهارت‌های معتبر:
+        {% for value, label in skill_choices %}<code>{{ value }}</code> ({{ label }}){% if not forloop.last %}، {% endif %}{% endfor %}
+    </div>
+</div>
+{% endblock %}
+
+{% block painting_js %}
+<script>
+$(function () {
+    $('#workerForm').on('submit', function (e) {
+        e.preventDefault();
+        var $form = $(this);
+        $.ajax({
+            url: $form.attr('action'),
+            method: 'POST',
+            headers: {'X-Requested-With': 'XMLHttpRequest'},
+            data: $form.serialize(),
+            success: function (data) {
+                if (data.success) { location.reload(); }
+                else { alert('خطا: ' + JSON.stringify(data.errors || data)); }
+            },
+            error: function () { alert('خطای ارتباط با سرور'); }
+        });
+    });
+
+    $('.edit-worker').on('click', function () {
+        var id = $(this).data('id');
+        var $form = $('#workerForm');
+        var $row = $(this).closest('tr');
+        $('#workerModalTitle').text('ویرایش کارگر');
+        $('#workerAction').val('edit');
+        $('#workerId').val(id);
+        // مقداردهی از ردیف (برای دقت بیشتر می‌توان از یک API جزئیات استفاده کرد)
+        $form.find('[name="user"] option').filter(function () {
+            return $(this).text().trim() === $row.find('td').eq(0).text().trim();
+        }).prop('selected', true);
+        $form.find('[name="stage"]').val('paint');
+        new bootstrap.Modal(document.getElementById('workerModal')).show();
+    });
+
+    $('.delete-worker').on('click', function () {
+        if (!confirm('آیا از حذف این کارگر اطمینان دارید؟')) return;
+        var id = $(this).data('id');
+        $.ajax({
+            url: '{% url "painting_workers" %}',
+            method: 'POST',
+            headers: {'X-Requested-With': 'XMLHttpRequest'},
+            data: {'csrfmiddlewaretoken': '{{ csrf_token }}', 'action': 'delete', 'worker_id': id},
+            success: function (data) { if (data.success) location.reload(); }
+        });
+    });
+});
+</script>
+{% endblock %}

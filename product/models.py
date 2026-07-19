@@ -6,7 +6,6 @@ from .fields import PersianDateField
 from io import BytesIO
 from django.core.files.base import ContentFile
 from django.conf import settings
-from django.urls import reverse
 import qrcode
 from decimal import Decimal
 
@@ -74,6 +73,12 @@ class Order(models.Model):
     customer = models.ForeignKey(Customer, on_delete=models.PROTECT, verbose_name="مشتری")
     number = models.CharField(max_length=10, blank=True, verbose_name="شماره سفارش")
     created_at = PersianDateField(default=jdatetime.date.today, verbose_name="تاریخ سفارش")
+    due_date = PersianDateField(null=True, blank=True, verbose_name="تاریخ تحویل")
+    priority = models.PositiveSmallIntegerField(
+        default=3,
+        choices=[(1, 'بسیار بالا'), (2, 'بالا'), (3, 'متوسط'), (4, 'پایین')],
+        verbose_name="اولویت"
+    )
     status = models.CharField(
         max_length=20,
         choices=ORDER_STATUS,
@@ -111,17 +116,25 @@ class Order(models.Model):
 
 
     def generate_tasks(self):
-        from .utils import get_material_for_color, parse_size_string, apply_size_adjustment, update_barcode_size
+        from .utils import (
+            get_material_for_color,
+            parse_size_string,
+            apply_size_adjustment,
+            update_barcode_size,
+        )
+        from .models import PaintingProcess
 
         if self.tasks.exists():
             return False
 
         tasks_to_create = []
         with transaction.atomic():
+            # Phase 1: regular station tasks per BOM part (global sequential step_order)
+            current_step = 0
+
             for item in self.items.all():
                 item_colors = {c.part: c.code for c in item.ordercolor.all()}
-                print(item_colors)
-                order_item_id = item.id   # شناسه آیتم سفارش
+                order_item_id = item.id
 
                 product_default_size = parse_size_string(item.product.default_size or "")
                 ordered_size = parse_size_string(item.size or "")
@@ -137,17 +150,14 @@ class Order(models.Model):
                     part = bom_entry.part
                     total_qty = bom_entry.quantity * item.quantity
 
-                    # تعیین متریال
                     material = part.material
                     if bom_entry.allow_material_override and bom_entry.color_part:
                         color_code = item_colors.get(bom_entry.color_part)
                         if color_code:
-                            print(bom_entry.color_material_map)
                             new_material = get_material_for_color(color_code, bom_entry.color_material_map)
                             if new_material:
                                 material = new_material
 
-                    # تعیین ابعاد
                     length = part.length
                     width = part.width
                     if bom_entry.size_affected and bom_entry.size_adjustment_rule and size_diff:
@@ -155,10 +165,8 @@ class Order(models.Model):
                             part.length, part.width, size_diff, bom_entry.size_adjustment_rule
                         )
 
-                    # تولید بارکد جدید با شناسه آیتم
                     new_f3 = update_barcode_size(part.f3, length, width, order_item_id)
 
-                    # ایجاد قطعه داینامیک
                     dynamic_part, created = Part.objects.get_or_create(
                         base_part=part,
                         material=material,
@@ -167,8 +175,8 @@ class Order(models.Model):
                         defaults={
                             'name': part.name,
                             'grain': part.grain,
-                            'pname' : part.pname,
-                            'turn':part.turn,
+                            'pname': part.pname,
+                            'turn': part.turn,
                             'f26': part.f26,
                             'f18': part.f18,
                             'f4': part.f4,
@@ -179,25 +187,59 @@ class Order(models.Model):
                         }
                     )
 
-                    # اگر قطعه از قبل وجود داشت ولی بارکد قدیمی بود، آن را به‌روز کنیم
                     if not created and dynamic_part.f3 != new_f3:
                         dynamic_part.f3 = new_f3
                         dynamic_part.save(update_fields=['f3'])
 
-                    # ایجاد تسک‌ها
                     stations = [s.strip() for s in dynamic_part.routing_code.split('.') if s.strip()]
                     stations.insert(0, "cut")
                     for idx, station_name in enumerate(stations):
+                        current_step += 1
                         tasks_to_create.append(
                             ProductionTask(
                                 order=self,
                                 part=dynamic_part,
                                 station_name=station_name.lower(),
-                                step_order=idx + 1,
+                                step_order=current_step,
                                 quantity=total_qty,
                                 status='pending' if idx == 0 else 'waiting'
                             )
                         )
+
+            # Phase 2: paint tasks per unique color_part per OrderItem
+            for item in self.items.all():
+                item_colors = {c.part: c.code for c in item.ordercolor.all()}
+
+                unique_color_parts = set()
+                for bom_entry in item.product.bom.all():
+                    if bom_entry.color_part:
+                        unique_color_parts.add(bom_entry.color_part)
+
+                for color_part in unique_color_parts:
+                    color_code = item_colors.get(color_part)
+                    if not color_code or color_code == 'nan':
+                        continue
+
+                    painting_process = None
+                    for process in PaintingProcess.objects.filter(is_active=True):
+                        if color_code in (process.color_codes or []):
+                            painting_process = process
+                            break
+
+                    if not painting_process:
+                        continue
+
+                    stages = painting_process.stages.all().order_by('order')
+                    base_step = current_step
+                    sample_part = item.product.bom.filter(color_part=color_part).first()
+                    if not sample_part:
+                        continue
+
+                    create_paint_tasks(
+                        tasks_to_create, self, sample_part.part, item.quantity,
+                        painting_process, base_step, order_item=item, color_part=color_part
+                    )
+                    current_step += len(stages)
 
             if tasks_to_create:
                 ProductionTask.objects.bulk_create(tasks_to_create)
@@ -510,10 +552,40 @@ class ProductionTask(models.Model):
     part = models.ForeignKey(Part, on_delete=models.PROTECT, verbose_name="قطعه")
     station_name = models.CharField(max_length=50, choices=STATION_CHOICES, verbose_name="ایستگاه کاری")
     step_order = models.PositiveIntegerField(verbose_name="اولویت مرحله")
-    quantity = models.PositiveIntegerField(verbose_name="تعداد قطعه")
+    quantity = models.PositiveIntegerField(verbose_name="عدد قطعه")
     status = models.CharField(max_length=20, choices=TASK_STATUS, default='waiting', verbose_name="وضعیت تسک")
     scanned_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, verbose_name="انجام‌دهنده")
     completed_at = PersianDateField(null=True, blank=True, verbose_name="زمان تکمیل")
+    painting_stage = models.ForeignKey(
+        'PaintingStage',
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        verbose_name="مرحله نقاشی"
+    )
+    scheduled_start = models.DateTimeField(null=True, blank=True, verbose_name="زمان شروع برنامه‌ریزی شده")
+    scheduled_end = models.DateTimeField(null=True, blank=True, verbose_name="زمان پایان برنامه‌ریزی شده")
+    assigned_worker = models.ForeignKey(
+        User,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name='assigned_tasks',
+        verbose_name="کارگر تخصیص‌یافته"
+    )
+    order_item = models.ForeignKey(
+        'OrderItem',
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name='paint_tasks',
+        verbose_name="آیتم سفارش مرتبط (برای نقاشی)"
+    )
+    color_part = models.CharField(
+        max_length=50,
+        blank=True,
+        verbose_name="بخش رنگی (بدنه، درب، ...)"
+    )
 
     class Meta:
         verbose_name = "وظیفه تولید"
@@ -569,6 +641,8 @@ class ProductionTask(models.Model):
 class WorkerProfile(models.Model):
     user = models.OneToOneField(User, on_delete=models.CASCADE)
     stage = models.CharField(max_length=50, choices=STATION_CHOICES, verbose_name="مرحله کاری")
+    skills = models.JSONField(default=list, blank=True, verbose_name="مهارت‌ها (لیست رشته‌ها)")
+    skill_costs = models.JSONField(default=dict, blank=True, verbose_name="هزینه‌های ترجیحی مهارت‌ها")
 
     def __str__(self):
         return f"{self.user.username} - {self.get_stage_display()}"
@@ -645,4 +719,64 @@ class ShipmentLog(models.Model):
 
 
 
+# ===================== مدل‌های روند نقاشی =====================
+
+class PaintingProcess(models.Model):
+    name = models.CharField(max_length=100, verbose_name="نام روند")
+    code = models.CharField(max_length=20, unique=True, verbose_name="کد روند")
+    color_codes = models.JSONField(default=list, verbose_name="لیست کدهای رنگی مرتبط")
+    is_active = models.BooleanField(default=True, verbose_name="فعال")
+    description = models.TextField(blank=True, verbose_name="توضیحات")
+
+    def __str__(self):
+        return self.name
+
+    class Meta:
+        verbose_name = "روند نقاشی"
+        verbose_name_plural = "روندهای نقاشی"
+
+
+class PaintingStage(models.Model):
+    SKILL_CHOICES = [
+        ('painter', 'نقاش'),
+        ('sander', 'سنباده‌کار'),
+        ('filler', 'بتونه‌کار'),
+        ('sealer', 'سیلرکار'),
+        ('killer', 'کیلرکار'),
+        ('general', 'عمومی'),
+    ]
+    process = models.ForeignKey(PaintingProcess, on_delete=models.CASCADE, related_name='stages')
+    order = models.PositiveSmallIntegerField(verbose_name="ترتیب مرحله")
+    name = models.CharField(max_length=100, verbose_name="نام مرحله")
+    duration_minutes = models.PositiveIntegerField(verbose_name="زمان انجام (دقیقه)")
+    drying_time_minutes = models.PositiveIntegerField(default=0, verbose_name="زمان خشک‌شدن (دقیقه)")
+    required_skill = models.CharField(max_length=50, choices=SKILL_CHOICES, default='painter', verbose_name="مهارت مورد نیاز")
+
+    class Meta:
+        ordering = ['process', 'order']
+        unique_together = ('process', 'order')
+        verbose_name = "مرحله نقاشی"
+        verbose_name_plural = "مراحل نقاشی"
+
+    def __str__(self):
+        return f"{self.process.name} - مرحله {self.order}: {self.name}"
+
+
+def create_paint_tasks(task_list, order, part, total_qty, painting_process, base_step, order_item=None, color_part=''):
+    """ایجاد تسک‌های نقاشی برای یک قطعه/آیتم و افزودن به task_list."""
+    stages = painting_process.stages.all().order_by('order')
+    for idx, stage in enumerate(stages, start=1):
+        task_list.append(
+            ProductionTask(
+                order=order,
+                part=part,
+                station_name='paint',
+                step_order=base_step + idx,
+                quantity=total_qty,
+                status='pending' if idx == 1 else 'waiting',
+                painting_stage=stage,
+                order_item=order_item,
+                color_part=color_part,
+            )
+        )
 

@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html dir="rtl" lang="fa">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>برنامه روزانه کارگران نقاشی</title>
+    <style>
+        body {
+            font-family: 'Vazir', 'Tahoma', sans-serif;
+            direction: rtl;
+            padding: 20px;
+            background: #fff;
+        }
+        .header {
+            text-align: center;
+            margin-bottom: 20px;
+            border-bottom: 2px solid #333;
+            padding-bottom: 10px;
+        }
+        .header h1 {
+            margin: 0;
+            font-size: 24px;
+        }
+        .header .date {
+            font-size: 16px;
+            color: #555;
+        }
+        .worker-section {
+            margin-bottom: 30px;
+            page-break-inside: avoid;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            padding: 15px;
+            background: #f9f9f9;
+        }
+        .worker-title {
+            font-size: 18px;
+            font-weight: bold;
+            background: #007bff;
+            color: #fff;
+            padding: 8px 15px;
+            border-radius: 5px;
+            display: inline-block;
+            margin-bottom: 10px;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 10px;
+            font-size: 14px;
+        }
+        th {
+            background: #e9ecef;
+            padding: 8px;
+            text-align: center;
+            border: 1px solid #ccc;
+        }
+        td {
+            padding: 8px;
+            text-align: center;
+            border: 1px solid #ccc;
+        }
+        .status-badge {
+            display: inline-block;
+            padding: 2px 10px;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: bold;
+        }
+        .status-pending { background: #ffc107; color: #000; }
+        .status-waiting { background: #17a2b8; color: #fff; }
+        .status-done { background: #28a745; color: #fff; }
+        .status-inprogress { background: #fd7e14; color: #fff; }
+        .total-time {
+            margin-top: 10px;
+            font-weight: bold;
+            text-align: left;
+        }
+        .footer {
+            margin-top: 30px;
+            text-align: center;
+            font-size: 12px;
+            color: #777;
+            border-top: 1px solid #ddd;
+            padding-top: 10px;
+        }
+        @media print {
+            body { padding: 10px; }
+            .no-print { display: none; }
+            .worker-section { border: 1px solid #aaa; background: #fff; }
+            .worker-title { background: #000; color: #fff; }
+        }
+        .no-print {
+            margin-bottom: 20px;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>📋 برنامه روزانه کارگران نقاشی</h1>
+        <div class="date">تاریخ: {{ selected_date_str }}</div>
+    </div>
+
+    <div class="no-print">
+        <button onclick="window.print()" class="btn btn-primary">🖨️ چاپ</button>
+        <a href="?date={{ yesterday }}" class="btn btn-secondary">روز قبل</a>
+        <a href="?date={{ tomorrow }}" class="btn btn-secondary">روز بعد</a>
+        <a href="{% url 'dashboard' %}" class="btn btn-secondary">داشبورد</a>
+    </div>
+
+    {% for data in schedule_data %}
+    <div class="worker-section">
+        <div class="worker-title">👤 {{ data.worker_label }}</div>
+        <table>
+            <thead>
+                <tr>
+                    <th>سفارش</th>
+                    <th>محصول</th>
+                    <th>بخش رنگی</th>
+                    <th>رنگ‌ها</th>
+                    <th>مرحله</th>
+                    <th>زمان (دقیقه)</th>
+                    <th>خشک‌شدن</th>
+                    <th>وضعیت</th>
+                    <th>شروع</th>
+                    <th>پایان</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for task in data.tasks %}
+                <tr>
+                    <td>{{ task.order.id }}</td>
+                    <td>
+                        {% if task.order_item %}
+                            {{ task.order_item.product.name }}
+                        {% else %}
+                            {{ task.part.name }}
+                        {% endif %}
+                    </td>
+                    <td>{{ task.color_part|default:"-" }}</td>
+                    <td>
+                        {% if task.order_item %}
+                            {% for color in task.order_item.ordercolor.all %}
+                                <span class="badge bg-info">{{ color.part }}:{{ color.code }}</span>
+                            {% endfor %}
+                        {% endif %}
+                    </td>
+                    <td>{{ task.painting_stage.name|default:"-" }}</td>
+                    <td>{{ task.painting_stage.duration_minutes|default:0 }}</td>
+                    <td>{{ task.painting_stage.drying_time_minutes|default:0 }}</td>
+                    <td>
+                        <span class="status-badge status-{{ task.status }}">
+                            {{ task.get_status_display }}
+                        </span>
+                    </td>
+                    <td>{{ task.scheduled_start|date:"H:i"|default:"-" }}</td>
+                    <td>{{ task.scheduled_end|date:"H:i"|default:"-" }}</td>
+                </tr>
+                {% empty %}
+                <tr><td colspan="8">هیچ تسکی برای این کارگر در این تاریخ وجود ندارد.</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        <div class="total-time">⏱️ مجموع زمان کاری: {{ data.total_duration }} دقیقه</div>
+    </div>
+    {% empty %}
+    <p style="text-align:center;color:#999;">هیچ برنامه‌ریزی برای این تاریخ وجود ندارد.</p>
+    {% endfor %}
+
+    <div class="footer">
+        تاریخ چاپ: {{ today_str }} | ساعت: {% now "H:i" %}
+    </div>
+</body>
+</html>

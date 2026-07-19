@@ -1,0 +1,173 @@
+{% extends "painting_management/base.html" %}
+{% block title %}مدیریت مراحل نقاشی{% endblock %}
+
+{% block painting_content %}
+<div class="container-fluid mt-4">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h2>📌 مدیریت مراحل نقاشی {% if process %}<small class="text-muted">- {{ process.name }}</small>{% endif %}</h2>
+        <div>
+            <a href="{% url 'painting_processes' %}" class="btn btn-outline-secondary me-2"><i class="bi bi-arrow-right"></i> روندها</a>
+            <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#stageModal">
+                <i class="bi bi-plus-circle"></i> مرحله جدید
+            </button>
+        </div>
+    </div>
+
+    {% if not process %}
+    <div class="row mb-3">
+        <div class="col-md-4">
+            <select id="processFilter" class="form-select" onchange="location.href=this.value">
+                <option value="{% url 'painting_stages' %}">همه روندها</option>
+                {% for p in processes %}
+                <option value="{% url 'painting_stages_process' p.id %}">{{ p.name }}</option>
+                {% endfor %}
+            </select>
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- فیلتر و جستجو -->
+    <div class="row mb-3">
+        <div class="col-md-6">
+            <form method="get" class="d-flex">
+                <input type="text" name="search" class="form-control me-2" placeholder="جستجو..." value="{{ search }}">
+                <button type="submit" class="btn btn-outline-secondary">جستجو</button>
+            </form>
+        </div>
+    </div>
+
+    <!-- لیست مراحل -->
+    <div class="table-responsive">
+        <table class="table table-hover">
+            <thead>
+                <tr>
+                    <th>ترتیب</th>
+                    <th>روند</th>
+                    <th>نام مرحله</th>
+                    <th>زمان (دقیقه)</th>
+                    <th>خشک‌شدن</th>
+                    <th>مهارت</th>
+                    <th>عملیات</th>
+                </tr>
+            </thead>
+            <tbody id="stagesSortable">
+                {% for stage in stages %}
+                <tr data-id="{{ stage.id }}">
+                    <td><i class="bi bi-grip-vertical"></i> {{ stage.order }}</td>
+                    <td>{{ stage.process.name }}</td>
+                    <td>{{ stage.name }}</td>
+                    <td>{{ stage.duration_minutes }}</td>
+                    <td>{{ stage.drying_time_minutes }}</td>
+                    <td>{{ stage.get_required_skill_display }}</td>
+                    <td>
+                        <button class="btn btn-sm btn-outline-primary edit-stage" data-id="{{ stage.id }}">
+                            <i class="bi bi-pencil"></i>
+                        </button>
+                        <button class="btn btn-sm btn-outline-danger delete-stage" data-id="{{ stage.id }}">
+                            <i class="bi bi-trash"></i>
+                        </button>
+                    </td>
+                </tr>
+                {% empty %}
+                <tr><td colspan="7" class="text-center">هیچ مرحله‌ای یافت نشد</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+    <!-- صفحه‌بندی -->
+    {% if stages.has_other_pages %}
+    <nav>
+        <ul class="pagination justify-content-center">
+            {% if stages.has_previous %}
+            <li class="page-item"><a class="page-link" href="?page=1">&laquo;</a></li>
+            <li class="page-item"><a class="page-link" href="?page={{ stages.previous_page_number }}">قبلی</a></li>
+            {% endif %}
+            <li class="page-item active"><span class="page-link">{{ stages.number }}</span></li>
+            {% if stages.has_next %}
+            <li class="page-item"><a class="page-link" href="?page={{ stages.next_page_number }}">بعدی</a></li>
+            <li class="page-item"><a class="page-link" href="?page={{ stages.paginator.num_pages }}">&raquo;</a></li>
+            {% endif %}
+        </ul>
+    </nav>
+    {% endif %}
+</div>
+
+<!-- مودال ایجاد/ویرایش -->
+<div class="modal fade" id="stageModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <form id="stageForm" method="post" action="{% url 'painting_stages' %}">
+                {% csrf_token %}
+                <input type="hidden" name="action" id="stageAction" value="create">
+                <input type="hidden" name="stage_id" id="stageId">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="stageModalTitle">مرحله جدید</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    {% if process %}
+                        <input type="hidden" name="process" value="{{ process.id }}">
+                    {% endif %}
+                    {{ form.as_p }}
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">انصراف</button>
+                    <button type="submit" class="btn btn-primary">ذخیره</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block painting_js %}
+<script>
+$(function () {
+    $('#stageForm').on('submit', function (e) {
+        e.preventDefault();
+        var $form = $(this);
+        $.ajax({
+            url: $form.attr('action'),
+            method: 'POST',
+            headers: {'X-Requested-With': 'XMLHttpRequest'},
+            data: $form.serialize(),
+            success: function (data) {
+                if (data.success) { location.reload(); }
+                else { alert('خطا: ' + JSON.stringify(data.errors || data)); }
+            },
+            error: function () { alert('خطای ارتباط با سرور'); }
+        });
+    });
+
+    $('.edit-stage').on('click', function () {
+        var id = $(this).data('id');
+        var $form = $('#stageForm');
+        $.getJSON('{% url "painting_stage_detail" 0 %}'.replace('/0/', '/' + id + '/'), function (data) {
+            $('#stageModalTitle').text('ویرایش مرحله');
+            $('#stageAction').val('edit');
+            $('#stageId').val(data.id);
+            $form.find('[name="process"]').val(data.process);
+            $form.find('[name="order"]').val(data.order);
+            $form.find('[name="name"]').val(data.name);
+            $form.find('[name="duration_minutes"]').val(data.duration_minutes);
+            $form.find('[name="drying_time_minutes"]').val(data.drying_time_minutes);
+            $form.find('[name="required_skill"]').val(data.required_skill);
+            new bootstrap.Modal(document.getElementById('stageModal')).show();
+        });
+    });
+
+    $('.delete-stage').on('click', function () {
+        if (!confirm('آیا از حذف این مرحله اطمینان دارید؟')) return;
+        var id = $(this).data('id');
+        $.ajax({
+            url: '{% url "painting_stages" %}',
+            method: 'POST',
+            headers: {'X-Requested-With': 'XMLHttpRequest'},
+            data: {'csrfmiddlewaretoken': '{{ csrf_token }}', 'action': 'delete', 'stage_id': id},
+            success: function (data) { if (data.success) location.reload(); }
+        });
+    });
+});
+</script>
+{% endblock %}

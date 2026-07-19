@@ -1,0 +1,171 @@
+{% extends "painting_management/base.html" %}
+{% block title %}آیتم‌های آماده نقاشی{% endblock %}
+
+{% block painting_content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <h2 class="mb-0">🖌️ آیتم‌های آماده نقاشی</h2>
+    <span class="badge bg-success">{{ items|length }} آیتم</span>
+</div>
+
+<p class="text-muted small mb-3">
+    آیتم‌هایی که مونتاژ اول (mon) ثبت شده و تسک نقاشی pending دارند.
+    آیتم‌های انتخاب‌شده را می‌توانید به برنامه روزانه اضافه کنید.
+</p>
+
+<div class="schedule-toolbar mb-3">
+    <form method="get" class="row g-2 align-items-end">
+        <div class="col-md-4">
+            <label class="form-label small mb-1">جستجو</label>
+            <input type="text" name="search" class="form-control" placeholder="سفارش، محصول، مشتری..." value="{{ search|default:'' }}">
+        </div>
+        <div class="col-md-3">
+            <label class="form-label small mb-1">روند نقاشی</label>
+            <select name="process" class="form-select">
+                <option value="">همه روندها</option>
+                {% for p in processes %}
+                    <option value="{{ p.id }}" {% if selected_process == p.id|stringformat:"s" %}selected{% endif %}>{{ p.name }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="col-md-2">
+            <button type="submit" class="btn btn-outline-primary w-100">فیلتر</button>
+        </div>
+    </form>
+</div>
+
+<div class="schedule-toolbar mb-3 d-flex flex-wrap gap-2 align-items-center">
+    <label class="small mb-0">تاریخ برنامه:</label>
+    <input type="text" id="scheduleDateInput" class="form-control form-control-sm" style="width:140px" value="{{ schedule_date }}" placeholder="1405-04-28">
+    <button type="button" id="addSelectedToScheduleBtn" class="btn btn-sm btn-primary" disabled>
+        <i class="bi bi-calendar-plus"></i> افزودن انتخاب‌شده‌ها به برنامه
+    </button>
+    <button type="button" id="autoAssignBtn" class="btn btn-sm btn-success">
+        <i class="bi bi-lightning-charge"></i> تخصیص خودکار
+    </button>
+    <a href="{% url 'painting_schedule' %}" class="btn btn-sm btn-outline-secondary">رفتن به برنامه روزانه</a>
+</div>
+
+<div class="table-responsive">
+    <table class="table table-hover table-striped align-middle">
+        <thead>
+            <tr>
+                <th style="width:40px"><input type="checkbox" id="selectAllItems" class="form-check-input"></th>
+                <th>سفارش</th>
+                <th>محصول</th>
+                <th>مشتری</th>
+                <th>رنگ‌ها</th>
+                <th>بخش رنگی</th>
+                <th>مونتاژ اول</th>
+                <th>مراحل</th>
+                <th>تعداد</th>
+                <th>عملیات</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for item in items %}
+            <tr>
+                <td><input type="checkbox" class="form-check-input item-checkbox" value="{{ item.id }}"></td>
+                <td><a href="{% url 'order_detail' item.order.id %}">{{ item.order.id }}</a></td>
+                <td>{{ item.product.name }}</td>
+                <td>{{ item.order.customer.name }}</td>
+                <td>
+                    {% for color in item.ordercolor.all %}
+                        <span class="badge bg-info text-dark">{{ color.part }}: {{ color.code }}</span>
+                    {% endfor %}
+                </td>
+                <td>
+                    {% for task in item.paint_tasks.all %}
+                        <span class="badge bg-{% if task.status == 'pending' %}warning text-dark{% elif task.status == 'waiting' %}secondary{% else %}success{% endif %}">
+                            {{ task.painting_stage.name }}
+                        </span>
+                    {% empty %}
+                        <span class="text-muted">تسکی ایجاد نشده</span>
+                        <a href="{% url 'assign_painting_process' item.id %}" class="btn btn-sm btn-primary d-block mt-1">
+                            ایجاد تسک نقاشی
+                        </a>
+                    {% endfor %}
+                </td>
+                <td>
+                    {% with mon_log=item.logs.all|first %}
+                        {{ mon_log.created_at|date:"Y/m/d"|default:"-" }}
+                    {% endwith %}
+                </td>
+                <td>
+                    {% for task in item.paint_tasks.all %}
+                        <span class="badge bg-{% if task.status == 'pending' %}warning text-dark{% elif task.status == 'waiting' %}secondary{% else %}success{% endif %}">
+                            {{ task.painting_stage.name }}
+                        </span>
+                    {% endfor %}
+                </td>
+                <td>{{ item.quantity }}</td>
+                <td>
+                    <a href="{% url 'item_detail' item.id %}" class="btn btn-sm btn-outline-primary" title="مشاهده"><i class="bi bi-eye"></i></a>
+                    <a href="{% url 'assign_painting_process' item.id %}" class="btn btn-sm btn-outline-secondary" title="اختصاص روند"><i class="bi bi-palette"></i></a>
+                </td>
+            </tr>
+            {% empty %}
+            <tr><td colspan="10" class="text-center py-4 text-muted">هیچ آیتمی برای نقاشی آماده نیست.</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}
+
+{% block painting_js %}
+<script>
+$(function () {
+    var csrf = '{{ csrf_token }}';
+
+    $('#selectAllItems').on('change', function () {
+        $('.item-checkbox').prop('checked', $(this).prop('checked'));
+        updateAddBtn();
+    });
+    $('.item-checkbox').on('change', updateAddBtn);
+
+    function updateAddBtn() {
+        var any = $('.item-checkbox:checked').length > 0;
+        $('#addSelectedToScheduleBtn').prop('disabled', !any);
+    }
+
+    $('#addSelectedToScheduleBtn').on('click', function () {
+        var itemIds = [];
+        $('.item-checkbox:checked').each(function () { itemIds.push($(this).val()); });
+        if (itemIds.length === 0) { alert('هیچ آیتمی انتخاب نشده است'); return; }
+        var date = $('#scheduleDateInput').val();
+        if (!date) { alert('تاریخ برنامه را وارد کنید'); return; }
+        if (!confirm(itemIds.length + ' آیتم به برنامه اضافه شود؟')) return;
+        $.ajax({
+            url: '{% url "painting_add_to_schedule" %}',
+            method: 'POST',
+            headers: {'X-Requested-With': 'XMLHttpRequest'},
+            data: {'csrfmiddlewaretoken': csrf, 'item_ids[]': itemIds, 'date': date},
+            success: function (data) {
+                if (data.success) {
+                    alert(data.message);
+                    window.location.href = data.redirect || '{% url "painting_schedule" %}?date=' + date;
+                } else {
+                    alert('خطا: ' + data.error);
+                }
+            },
+            error: function () { alert('خطای ارتباط با سرور'); }
+        });
+    });
+
+    $('#autoAssignBtn').on('click', function () {
+        if (!confirm('آیا از اجرای تخصیص خودکار اطمینان دارید؟')) return;
+        $.ajax({
+            url: '{% url "painting_auto_assign" %}',
+            method: 'POST',
+            headers: {'X-Requested-With': 'XMLHttpRequest'},
+            data: {'csrfmiddlewaretoken': csrf},
+            success: function (data) {
+                if (data.success) { alert(data.message); location.reload(); }
+                else { alert('خطا: ' + data.error); }
+            },
+            error: function () { alert('خطای ارتباط با سرور'); }
+        });
+    });
+});
+</script>
+{% endblock %}

@@ -8,6 +8,7 @@ from .models import (
 )
 from .forms import OrderForm, OrderItemForm, ColorForm, CompleteOrderForm
 from .models import ShipmentLog
+from .models import PaintingProcess, PaintingStage
 
 # @admin.register(PackagingUnit)
 # class PackagingUnitAdmin(admin.ModelAdmin):
@@ -217,9 +218,9 @@ class OrderItemInline(admin.TabularInline):
 
 @admin.register(Order)
 class OrderAdmin(admin.ModelAdmin):
-    list_display = ['id', 'user', 'created_at', 'total_items', 'print_link']
+    list_display = ['id', 'user', 'created_at', 'due_date', 'priority', 'total_items', 'print_link']
     readonly_fields = ['print_link']
-    list_filter = ['status', 'created_at', 'customer']
+    list_filter = ['status', 'created_at', 'customer', 'priority']
     inlines = [OrderItemInline]
     actions = ['generate_tasks_action']
 
@@ -383,3 +384,28 @@ class ProductionLogAdmin(admin.ModelAdmin):
 @admin.register(ShipmentLog)
 class ShipmentLogAdmin(admin.ModelAdmin):
     list_display = ['plate_number', 'shipped_at', 'packaging_unit']
+
+
+
+@admin.register(PaintingProcess)
+class PaintingProcessAdmin(admin.ModelAdmin):
+    list_display = ['name', 'code', 'color_codes', 'is_active']
+    list_filter = ['is_active']
+    search_fields = ['name', 'code']
+    fieldsets = (
+        (None, {
+            'fields': ('name', 'code', 'color_codes', 'is_active', 'description')
+        }),
+    )
+
+
+@admin.register(PaintingStage)
+class PaintingStageAdmin(admin.ModelAdmin):
+    list_display = ['process', 'order', 'name', 'duration_minutes', 'drying_time_minutes', 'required_skill']
+    list_filter = ['process', 'required_skill']
+    ordering = ['process', 'order']
+    fieldsets = (
+        (None, {
+            'fields': ('process', 'order', 'name', 'duration_minutes', 'drying_time_minutes', 'required_skill')
+        }),
+    )

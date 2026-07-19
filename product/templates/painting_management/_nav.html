@@ -1,0 +1,40 @@
+<nav class="painting-nav card shadow-sm mb-4">
+    <div class="card-body py-2">
+        <div class="d-flex flex-wrap align-items-center justify-content-between gap-2">
+            <ul class="nav nav-pills flex-wrap gap-1 mb-0">
+                <li class="nav-item">
+                    <a class="nav-link {% if active_tab == 'dashboard' %}active{% endif %}" href="{% url 'painting_dashboard' %}">
+                        <i class="bi bi-speedometer2"></i> داشبورد
+                    </a>
+                </li>
+                <li class="nav-item">
+                    <a class="nav-link {% if active_tab == 'ready' %}active{% endif %}" href="{% url 'painting_ready_list' %}">
+                        <i class="bi bi-check2-circle"></i> آماده نقاشی
+                        {% if unscheduled_ready_count %}<span class="badge bg-warning text-dark ms-1">{{ unscheduled_ready_count }}</span>{% endif %}
+                    </a>
+                </li>
+                <li class="nav-item">
+                    <a class="nav-link {% if active_tab == 'schedule' %}active{% endif %}" href="{% url 'painting_schedule' %}">
+                        <i class="bi bi-calendar-week"></i> برنامه‌ریزی
+                    </a>
+                </li>
+                <li class="nav-item">
+                    <a class="nav-link {% if active_tab == 'processes' %}active{% endif %}" href="{% url 'painting_processes' %}">
+                        <i class="bi bi-diagram-3"></i> روندها
+                    </a>
+                </li>
+                <li class="nav-item">
+                    <a class="nav-link {% if active_tab == 'stages' %}active{% endif %}" href="{% url 'painting_stages' %}">
+                        <i class="bi bi-list-ol"></i> مراحل
+                    </a>
+                </li>
+                <li class="nav-item">
+                    <a class="nav-link {% if active_tab == 'workers' %}active{% endif %}" href="{% url 'painting_workers' %}">
+                        <i class="bi bi-people"></i> کارگران
+                    </a>
+                </li>
+            </ul>
+            <span class="text-muted small">امروز: {{ today|default:"" }}</span>
+        </div>
+    </div>
+</nav>
