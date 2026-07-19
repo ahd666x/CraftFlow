@@ -115,10 +115,54 @@ def update_barcode_size(original_barcode, new_length, new_width, order_item_id=N
     return new_barcode
 
 
+def get_unique_color_codes_for_item(item):
+    """
+    استخراج لیست کدهای رنگی منحصربه‌فرد برای یک آیتم سفارش.
+    اولویت: رنگ‌های ثبت‌شده در سفارش > رنگ‌های پیش‌فرض محصول
+    """
+    color_codes = set()
+
+    order_colors = item.ordercolor.all()
+    if order_colors.exists():
+        for color in order_colors:
+            if color.code and color.code != 'nan':
+                color_codes.add(str(color.code))
+    else:
+        default_colors = item.product.default_colors or {}
+        for code in default_colors.values():
+            if code and code != 'nan':
+                color_codes.add(str(code))
+
+    return list(color_codes)
+
+
+def get_painting_process_for_color(color_code):
+    """
+    بازگرداندن اولین روند فعال که color_code در لیست آن وجود دارد.
+    تطابق با تبدیل هر دو به رشته انجام می‌شود تا نوع داده (عدد/رشته)干预 نکند.
+    """
+    from .models import PaintingProcess
+
+    if not color_code:
+        return None
+
+    color_code = str(color_code).strip()
+
+    processes = PaintingProcess.objects.filter(is_active=True)
+
+    for process in processes:
+        codes = process.color_codes or []
+        str_codes = [str(c) for c in codes]
+        if color_code in str_codes:
+            return process
+
+    return None
+
+
 def auto_assign_paint_tasks(target_date=None):
     """تخصیص خودکار کارگران به تسک‌های نقاشی (بر اساس OrderItem)"""
     import logging
-    from datetime import timedelta
+    from datetime import datetime, time, timedelta
     from django.utils import timezone
     logger = logging.getLogger(__name__)
 
@@ -140,6 +184,21 @@ def auto_assign_paint_tasks(target_date=None):
 
     if not tasks:
         return
+
+    day_start = timezone.make_aware(datetime.combine(timezone.localdate(), time(8, 0)))
+    day_end = timezone.make_aware(datetime.combine(timezone.localdate(), time(16, 30)))
+    break_start = timezone.make_aware(datetime.combine(timezone.localdate(), time(12, 30)))
+    break_end = timezone.make_aware(datetime.combine(timezone.localdate(), time(13, 30)))
+
+    def next_available_start(start):
+        if start < day_start:
+            return day_start
+        if break_start <= start < break_end:
+            return break_end
+        if start >= day_end:
+            next_day = (timezone.localdate() + timedelta(days=1))
+            return timezone.make_aware(datetime.combine(next_day, time(8, 0)))
+        return start
 
     worker_load = {}
     for wp in WorkerProfile.objects.annotate(
@@ -166,7 +225,7 @@ def auto_assign_paint_tasks(target_date=None):
             selected_worker = min(pool, key=lambda wp: worker_load.get(wp.user_id, (None, 0))[1])
             task.assigned_worker = selected_worker.user
             if not task.scheduled_start:
-                task.scheduled_start = timezone.now()
+                task.scheduled_start = next_available_start(timezone.now())
             if task.painting_stage and not task.scheduled_end:
                 task.scheduled_end = task.scheduled_start + timedelta(minutes=task.painting_stage.duration_minutes)
             task.save()
@@ -269,13 +328,26 @@ def schedule_paint_items_for_date(item_ids, target_jdate):
 
     gregorian = target_jdate.togregorian()
     day_start = timezone.make_aware(datetime.combine(gregorian, time(8, 0)))
+    day_end = timezone.make_aware(datetime.combine(gregorian, time(16, 30)))
+    break_start = timezone.make_aware(datetime.combine(gregorian, time(12, 30)))
+    break_end = timezone.make_aware(datetime.combine(gregorian, time(13, 30)))
+
+    def next_available_start(start):
+        if start < day_start:
+            return day_start
+        if break_start <= start < break_end:
+            return break_end
+        if start >= day_end:
+            next_day = (target_jdate + timedelta(days=1)).togregorian()
+            return timezone.make_aware(datetime.combine(next_day, time(8, 0)))
+        return start
 
     last_end = ProductionTask.objects.filter(
         station_name='paint',
         scheduled_end__date=gregorian,
     ).aggregate(max_end=Max('scheduled_end'))['max_end']
 
-    current_start = max(last_end, day_start) if last_end else day_start
+    current_start = next_available_start(last_end) if last_end else day_start
     scheduled_count = 0
 
     for item_id in ready_ids:
@@ -288,9 +360,10 @@ def schedule_paint_items_for_date(item_ids, target_jdate):
             ).select_related('painting_stage').order_by('step_order')
         )
         for task in tasks:
-            task.scheduled_start = current_start
+            current_start = next_available_start(current_start)
             duration = task.painting_stage.duration_minutes if task.painting_stage else 60
             drying = task.painting_stage.drying_time_minutes if task.painting_stage else 0
+            task.scheduled_start = current_start
             task.scheduled_end = current_start + timedelta(minutes=duration)
             task.save(update_fields=['scheduled_start', 'scheduled_end'])
             current_start = task.scheduled_end + timedelta(minutes=drying)

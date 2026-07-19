@@ -135,6 +135,7 @@ urlpatterns = [
     path('painting/auto-assign/', views.painting_auto_assign, name='painting_auto_assign'),
     path('painting/available-workers/', views.painting_get_available_workers, name='painting_available_workers'),
     path('painting/assign-worker/', views.painting_assign_worker, name='painting_assign_worker'),
+    path('painting/clear-schedule/', views.painting_clear_schedule, name='painting_clear_schedule'),
 
 
     path('customer/shipments/', views.customer_shipments, name='customer_shipments'),

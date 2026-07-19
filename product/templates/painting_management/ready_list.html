@@ -8,8 +8,7 @@
 </div>
 
 <p class="text-muted small mb-3">
-    آیتم‌هایی که مونتاژ اول (mon) ثبت شده و تسک نقاشی pending دارند.
-    آیتم‌های انتخاب‌شده را می‌توانید به برنامه روزانه اضافه کنید.
+    آیتم‌هایی که لاگ مونتاژ اول (mon) ثبت شده‌اند. برای برنامه‌ریزی، آیتم‌ها را انتخاب کرده و دکمه «افزودن به برنامه» را بزنید.
 </p>
 
 <div class="schedule-toolbar mb-3">
@@ -39,9 +38,6 @@
     <button type="button" id="addSelectedToScheduleBtn" class="btn btn-sm btn-primary" disabled>
         <i class="bi bi-calendar-plus"></i> افزودن انتخاب‌شده‌ها به برنامه
     </button>
-    <button type="button" id="autoAssignBtn" class="btn btn-sm btn-success">
-        <i class="bi bi-lightning-charge"></i> تخصیص خودکار
-    </button>
     <a href="{% url 'painting_schedule' %}" class="btn btn-sm btn-outline-secondary">رفتن به برنامه روزانه</a>
 </div>
 
@@ -54,9 +50,7 @@
                 <th>محصول</th>
                 <th>مشتری</th>
                 <th>رنگ‌ها</th>
-                <th>بخش رنگی</th>
                 <th>مونتاژ اول</th>
-                <th>مراحل</th>
                 <th>تعداد</th>
                 <th>عملیات</th>
             </tr>
@@ -74,41 +68,21 @@
                     {% endfor %}
                 </td>
                 <td>
-                    {% for task in item.paint_tasks.all %}
-                        <span class="badge bg-{% if task.status == 'pending' %}warning text-dark{% elif task.status == 'waiting' %}secondary{% else %}success{% endif %}">
-                            {{ task.painting_stage.name }}
-                        </span>
-                    {% empty %}
-                        <span class="text-muted">تسکی ایجاد نشده</span>
-                        <a href="{% url 'assign_painting_process' item.id %}" class="btn btn-sm btn-primary d-block mt-1">
-                            ایجاد تسک نقاشی
-                        </a>
-                    {% endfor %}
-                </td>
-                <td>
                     {% with mon_log=item.logs.all|first %}
                         {{ mon_log.created_at|date:"Y/m/d"|default:"-" }}
                     {% endwith %}
                 </td>
-                <td>
-                    {% for task in item.paint_tasks.all %}
-                        <span class="badge bg-{% if task.status == 'pending' %}warning text-dark{% elif task.status == 'waiting' %}secondary{% else %}success{% endif %}">
-                            {{ task.painting_stage.name }}
-                        </span>
-                    {% endfor %}
-                </td>
                 <td>{{ item.quantity }}</td>
                 <td>
                     <a href="{% url 'item_detail' item.id %}" class="btn btn-sm btn-outline-primary" title="مشاهده"><i class="bi bi-eye"></i></a>
-                    <a href="{% url 'assign_painting_process' item.id %}" class="btn btn-sm btn-outline-secondary" title="اختصاص روند"><i class="bi bi-palette"></i></a>
+                    <a href="{% url 'assign_painting_process' item.id %}" class="btn btn-sm btn-outline-secondary" title="ایجاد تسک نقاشی"><i class="bi bi-palette"></i></a>
                 </td>
             </tr>
             {% empty %}
-            <tr><td colspan="10" class="text-center py-4 text-muted">هیچ آیتمی برای نقاشی آماده نیست.</td></tr>
-                {% endfor %}
-            </tbody>
-        </table>
-    </div>
+            <tr><td colspan="8" class="text-center py-4 text-muted">هیچ آیتمی برای نقاشی آماده نیست.</td></tr>
+            {% endfor %}
+        </tbody>
+    </table>
 </div>
 {% endblock %}
 
@@ -147,21 +121,6 @@ $(function () {
                 } else {
                     alert('خطا: ' + data.error);
                 }
-            },
-            error: function () { alert('خطای ارتباط با سرور'); }
-        });
-    });
-
-    $('#autoAssignBtn').on('click', function () {
-        if (!confirm('آیا از اجرای تخصیص خودکار اطمینان دارید؟')) return;
-        $.ajax({
-            url: '{% url "painting_auto_assign" %}',
-            method: 'POST',
-            headers: {'X-Requested-With': 'XMLHttpRequest'},
-            data: {'csrfmiddlewaretoken': csrf},
-            success: function (data) {
-                if (data.success) { alert(data.message); location.reload(); }
-                else { alert('خطا: ' + data.error); }
             },
             error: function () { alert('خطای ارتباط با سرور'); }
         });

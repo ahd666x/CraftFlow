@@ -2928,57 +2928,79 @@ def customer_shipment_detail(request, plate, date):
 @login_required
 @admin_or_manager_required
 def assign_painting_process(request, item_id):
-    """اختصاص روند نقاشی به یک آیتم سفارش (دستی)"""
-    from .models import (
-        PaintingProcess, ProductionTask, create_paint_tasks,
-    )
+    from .utils import get_unique_color_codes_for_item, get_painting_process_for_color
+    from .models import PaintingProcess, ProductionTask, create_paint_tasks
 
     item = get_object_or_404(OrderItem, pk=item_id)
+
     if request.method == 'POST':
-        process_id = request.POST.get('process_id')
-        process = get_object_or_404(PaintingProcess, pk=process_id, is_active=True)
+        with transaction.atomic():
+            ProductionTask.objects.filter(
+                order=item.order,
+                station_name='paint',
+                order_item=item
+            ).delete()
 
-        base_part_ids = list(item.product.bom.values_list('part', flat=True))
-        ProductionTask.objects.filter(
-            order=item.order,
-            station_name='paint'
-        ).filter(
-            models.Q(order_item=item) | models.Q(part__in=base_part_ids) | models.Q(part__base_part__in=base_part_ids)
-        ).delete()
+            global_base = ProductionTask.objects.filter(order=item.order).aggregate(
+                max_step=models.Max('step_order')
+            )['max_step'] or 0
 
-        global_base = ProductionTask.objects.filter(order=item.order).aggregate(
-            max_step=models.Max('step_order')
-        )['max_step'] or 0
+            new_tasks = []
+            errors = []
 
-        item_colors = {c.part: c.code for c in item.ordercolor.all()}
-        unique_color_parts = set()
-        for bom_entry in item.product.bom.all():
-            if bom_entry.color_part:
-                unique_color_parts.add(bom_entry.color_part)
+            color_codes = get_unique_color_codes_for_item(item)
+            item_colors = {c.part: c.code for c in item.ordercolor.all()}
 
-        new_tasks = []
-        for color_part in unique_color_parts:
-            color_code = item_colors.get(color_part)
-            if not color_code or color_code == 'nan':
-                continue
+            if not color_codes:
+                errors.append("⚠️ هیچ کد رنگی برای این آیتم یافت نشد.")
 
-            sample_part = item.product.bom.filter(color_part=color_part).first()
-            if not sample_part:
-                continue
+            for color_code in color_codes:
+                painting_process = get_painting_process_for_color(color_code)
+                if not painting_process:
+                    errors.append(f"❌ کد رنگ {color_code}: روند نقاشی فعالی یافت نشد.")
+                    continue
 
-            create_paint_tasks(
-                new_tasks, item.order, sample_part.part, item.quantity,
-                process, global_base, order_item=item, color_part=color_part
-            )
-            global_base += len(process.stages.all())
+                sample_part = item.product.bom.first().part if item.product.bom.exists() else None
+                if not sample_part:
+                    errors.append(f"❌ کد رنگ {color_code}: قطعه‌ای در BOM یافت نشد.")
+                    continue
 
-        if new_tasks:
-            ProductionTask.objects.bulk_create(new_tasks)
-        messages.success(request, f"روند نقاشی '{process.name}' برای آیتم {item.id} اعمال شد.")
+                total_qty = item.quantity
+                color_part_name = next((part for part, code in item_colors.items() if code == color_code), f"رنگ {color_code}")
+
+                create_paint_tasks(
+                    tasks_list=new_tasks,
+                    order=item.order,
+                    part=sample_part,
+                    quantity=total_qty,
+                    process=painting_process,
+                    base_step=global_base,
+                    order_item=item,
+                    color_part=color_part_name
+                )
+                global_base += painting_process.stages.count()
+
+            if new_tasks:
+                ProductionTask.objects.bulk_create(new_tasks)
+                messages.success(
+                    request,
+                    f"✅ {len(new_tasks)} تسک نقاشی برای آیتم {item.id} ایجاد شد."
+                )
+                for err in errors:
+                    messages.warning(request, err)
+            else:
+                for err in errors:
+                    messages.error(request, err)
+                messages.error(request, "❌ هیچ تسک نقاشی‌ای ایجاد نشد.")
+
         return redirect('item_detail', pk=item_id)
 
-    processes = PaintingProcess.objects.filter(is_active=True)
-    return render(request, 'assign_painting.html', {'item': item, 'processes': processes})
+    color_codes = get_unique_color_codes_for_item(item)
+    return render(request, 'assign_painting.html', {
+        'item': item,
+        'color_codes': color_codes,
+        'has_colors': item.ordercolor.exists() or bool(item.product.default_colors),
+    })
 
 
 @login_required
@@ -3357,8 +3379,8 @@ def painting_schedule_view(request):
             station_name='paint',
             scheduled_start__date=gregorian_date,
         ).select_related(
-            'order_item__order', 'order_item__product', 'painting_stage', 'assigned_worker',
-        ).prefetch_related('order_item__ordercolor').order_by('assigned_worker', 'scheduled_start')
+            'order_item__order', 'order_item__product', 'order_item__product__category', 'painting_stage', 'assigned_worker',
+        ).prefetch_related('order_item__ordercolor').order_by('scheduled_start', 'step_order')
     )
 
     grouped_tasks = {}
@@ -3384,7 +3406,7 @@ def painting_schedule_view(request):
             status__in=['pending', 'waiting'],
             scheduled_start__date=gregorian_date,
         ).select_related(
-            'order_item__order', 'order_item__product', 'painting_stage',
+            'order_item__order', 'order_item__product', 'order_item__product__category', 'painting_stage',
         ).prefetch_related('order_item__ordercolor').order_by('scheduled_start', 'step_order')
     )
 
@@ -3475,59 +3497,51 @@ def painting_add_to_schedule(request):
 @login_required
 @admin_or_manager_required
 def painting_assign_process(request):
-    """تخصیص دستی روند نقاشی به یک آیتم سفارش (AJAX)"""
-    from .models import OrderItem, PaintingProcess, ProductionTask, create_paint_tasks
+    """تخصیص خودکار روند نقاشی به یک آیتم سفارش بر اساس کدهای رنگی (AJAX)"""
+    from .utils import get_unique_color_codes_for_item, get_painting_process_for_color
 
     if request.method == 'POST' and request.headers.get('X-Requested-With') == 'XMLHttpRequest':
         item_id = request.POST.get('item_id')
-        process_id = request.POST.get('process_id')
 
-        if not item_id or not process_id:
+        if not item_id:
             return JsonResponse({'success': False, 'error': 'اطلاعات ناقص'})
 
         item = get_object_or_404(OrderItem, pk=item_id)
-        process = get_object_or_404(PaintingProcess, pk=process_id, is_active=True)
 
         try:
             with transaction.atomic():
-                base_part_ids = list(item.product.bom.values_list('part', flat=True))
                 ProductionTask.objects.filter(
                     order=item.order,
-                    station_name='paint'
-                ).filter(
-                    Q(part__in=base_part_ids) | Q(part__base_part__in=base_part_ids)
+                    station_name='paint',
+                    order_item=item
                 ).delete()
 
                 global_base = ProductionTask.objects.filter(order=item.order).aggregate(
                     max_step=models.Max('step_order')
                 )['max_step'] or 0
 
-                item_colors = {c.part: c.code for c in item.ordercolor.all()}
-                unique_color_parts = set()
-                for bom_entry in item.product.bom.all():
-                    if bom_entry.color_part:
-                        unique_color_parts.add(bom_entry.color_part)
-
+                color_codes = get_unique_color_codes_for_item(item)
                 new_tasks = []
-                for color_part in unique_color_parts:
-                    color_code = item_colors.get(color_part)
-                    if not color_code or color_code == 'nan':
+
+                for color_code in color_codes:
+                    painting_process = get_painting_process_for_color(color_code)
+                    if not painting_process:
                         continue
 
-                    sample_part = item.product.bom.filter(color_part=color_part).first()
+                    sample_part = item.product.bom.first().part if item.product.bom.exists() else None
                     if not sample_part:
                         continue
 
                     create_paint_tasks(
-                        new_tasks, item.order, sample_part.part, item.quantity,
-                        process, global_base, order_item=item, color_part=color_part
+                        new_tasks, item.order, sample_part, item.quantity,
+                        painting_process, global_base, order_item=item, color_part=f"رنگ {color_code}"
                     )
-                    global_base += len(process.stages.all())
+                    global_base += painting_process.stages.count()
 
                 if new_tasks:
                     ProductionTask.objects.bulk_create(new_tasks)
 
-                return JsonResponse({'success': True, 'message': f'روند {process.name} با موفقیت اعمال شد.'})
+                return JsonResponse({'success': True, 'message': 'روند نقاشی با موفقیت اعمال شد.'})
         except Exception as e:
             return JsonResponse({'success': False, 'error': str(e)})
 
@@ -3609,4 +3623,35 @@ def painting_assign_worker(request):
 
     return JsonResponse({'success': False, 'error': 'درخواست نامعتبر'})
 
+
+@login_required
+@admin_or_manager_required
+def painting_clear_schedule(request):
+    """پاک کردن تمام برنامه‌ریزی‌های روز انتخاب‌شده (AJAX)"""
+    from .utils import parse_jalali_date
+
+    if request.method != 'POST' or request.headers.get('X-Requested-With') != 'XMLHttpRequest':
+        return JsonResponse({'success': False, 'error': 'درخواست نامعتبر'})
+
+    date_str = request.POST.get('date')
+    if not date_str:
+        return JsonResponse({'success': False, 'error': 'تاریخ ارسال نشده'})
+
+    try:
+        target_date = parse_jalali_date(date_str)
+    except ValueError as exc:
+        return JsonResponse({'success': False, 'error': str(exc)})
+
+    gregorian = target_date.togregorian()
+    tasks = ProductionTask.objects.filter(
+        station_name='paint',
+        scheduled_start__date=gregorian,
+    )
+    count = tasks.count()
+    tasks.update(scheduled_start=None, scheduled_end=None, assigned_worker=None)
+    return JsonResponse({
+        'success': True,
+        'message': f'{count} تسک از برنامه {target_date.strftime("%Y/%m/%d")} حذف شد.',
+        'cleared_count': count,
+    })
 

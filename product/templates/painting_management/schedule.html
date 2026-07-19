@@ -10,13 +10,15 @@
         <a href="{% url 'daily_schedule_print' %}?date={{ selected_date_str }}" target="_blank" class="btn btn-outline-secondary me-2">
             <i class="bi bi-printer"></i> چاپ
         </a>
+        <button id="clearScheduleBtn" class="btn btn-outline-danger me-2">
+            <i class="bi bi-trash"></i> پاک کردن برنامه
+        </button>
         <button id="autoAssignBtn" class="btn btn-success">
             <i class="bi bi-lightning-charge"></i> تخصیص خودکار
         </button>
     </div>
 </div>
 
-<!-- ناوبری تاریخ -->
 <div class="mb-3 d-flex align-items-center gap-2">
     <a href="?date={{ yesterday }}" class="btn btn-sm btn-outline-secondary">روز قبل</a>
     <span class="fs-5">{{ selected_date|date:'Y/m/d' }}</span>
@@ -26,7 +28,6 @@
     </a>
 </div>
 
-<!-- آمار -->
 <div class="row g-3 mb-4">
     <div class="col-md-3">
         <div class="card bg-primary text-white"><div class="card-body">
@@ -50,7 +51,6 @@
     </div>
 </div>
 
-<!-- گروه‌بندی بر اساس کارگر -->
 {% for worker_name, tasks in grouped_tasks.items %}
 <div class="card mb-3">
     <div class="card-header d-flex justify-content-between">
@@ -62,35 +62,21 @@
             <table class="table table-sm mb-0">
                 <thead>
                     <tr>
-                        <th>سفارش</th><th>محصول</th><th>بخش رنگی</th><th>رنگ‌ها</th><th>مرحله</th>
-                        <th>زمان (دقیقه)</th><th>خشک‌شدن</th><th>وضعیت</th><th>شروع</th><th>پایان</th>
+                        <th>#</th>
+                        <th>محصول</th>
+                        <th>رنگ</th>
+                        <th>مرحله</th>
+                        <th>شروع</th>
+                        <th>پایان</th>
                     </tr>
                 </thead>
                 <tbody>
                     {% for task in tasks %}
                     <tr>
-                        <td>{{ task.order_item.order.id }}</td>
-                        <td>{{ task.order_item.product.name }}</td>
+                        <td>{{ task.order_item.id }}</td>
+                        <td>{{ task.order_item.product.name }} <small class="text-muted">({{ task.order_item.product.category.name }})</small></td>
                         <td>{{ task.color_part|default:"-" }}</td>
-                        <td>
-                            {% for color in task.order_item.ordercolor.all %}
-                                <span class="badge bg-info">{{ color.part }}:{{ color.code }}</span>
-                            {% endfor %}
-                        </td>
                         <td>{{ task.painting_stage.name|default:"-" }}</td>
-                        <td>{{ task.painting_stage.duration_minutes|default:0 }}</td>
-                        <td>{{ task.painting_stage.drying_time_minutes|default:0 }}</td>
-                        <td>
-                            {% if task.status == 'done' %}
-                                <span class="badge bg-success">تکمیل شده</span>
-                            {% elif task.status == 'pending' %}
-                                <span class="badge bg-warning text-dark">آماده انجام</span>
-                            {% elif task.status == 'waiting' %}
-                                <span class="badge bg-secondary">در انتظار</span>
-                            {% else %}
-                                <span class="badge bg-secondary">{{ task.get_status_display }}</span>
-                            {% endif %}
-                        </td>
                         <td>{{ task.scheduled_start|date:"H:i"|default:"-" }}</td>
                         <td>{{ task.scheduled_end|date:"H:i"|default:"-" }}</td>
                     </tr>
@@ -102,30 +88,28 @@
 </div>
 {% endfor %}
 
-<!-- تسک‌های بدون تخصیص -->
 {% if unassigned_tasks %}
 <div class="card mt-4">
-    <div class="card-header">تسک‌های بدون تخصیص (آماده تخصیص دستی)</div>
+    <div class="card-header">تسک‌های بدون تخصیص</div>
     <div class="card-body p-0">
         <div class="table-responsive">
             <table class="table table-sm mb-0">
                 <thead>
                     <tr>
-                        <th>سفارش</th><th>محصول</th><th>بخش رنگی</th><th>رنگ‌ها</th><th>مرحله</th>
-                        <th>مهارت مورد نیاز</th><th>عملیات</th>
+                        <th>#</th>
+                        <th>محصول</th>
+                        <th>رنگ</th>
+                        <th>مرحله</th>
+                        <th>مهارت</th>
+                        <th>عملیات</th>
                     </tr>
                 </thead>
                 <tbody>
                     {% for task in unassigned_tasks %}
                     <tr>
-                        <td>{{ task.order_item.order.id }}</td>
-                        <td>{{ task.order_item.product.name }}</td>
+                        <td>{{ task.order_item.id }}</td>
+                        <td>{{ task.order_item.product.name }} <small class="text-muted">({{ task.order_item.product.category.name }})</small></td>
                         <td>{{ task.color_part|default:"-" }}</td>
-                        <td>
-                            {% for color in task.order_item.ordercolor.all %}
-                                <span class="badge bg-info">{{ color.part }}:{{ color.code }}</span>
-                            {% endfor %}
-                        </td>
                         <td>{{ task.painting_stage.name|default:"-" }}</td>
                         <td>
                             {% if task.painting_stage %}
@@ -146,67 +130,11 @@
                         </td>
                     </tr>
                     {% empty %}
-                    <tr><td colspan="7" class="text-center">تسک بدون تخصیصی وجود ندارد.</td></tr>
+                    <tr><td colspan="6" class="text-center">تسک بدون تخصیصی وجود ندارد.</td></tr>
                     {% endfor %}
                 </tbody>
             </table>
         </div>
-    </div>
-</div>
-{% endif %}
-
-<!-- آیتم‌های آماده برای افزودن به برنامه -->
-{% if ready_unscheduled %}
-<div class="card mt-4">
-    <div class="card-header d-flex justify-content-between align-items-center">
-        <span>🖌️ آیتم‌های آماده برای برنامه ({{ ready_unscheduled|length }})</span>
-        <a href="{% url 'painting_ready_list' %}" class="btn btn-sm btn-outline-primary">مشاهده کامل</a>
-    </div>
-    <div class="card-body p-0">
-        <div class="table-responsive">
-            <table class="table table-sm mb-0">
-                <thead>
-                    <tr>
-                        <th style="width:40px"><input type="checkbox" id="selectAllReady" class="form-check-input"></th>
-                        <th>سفارش</th><th>محصول</th><th>مشتری</th><th>رنگ‌ها</th>
-                        <th>تعداد</th><th>عملیات</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {% for item in ready_unscheduled %}
-                    <tr>
-                        <td><input type="checkbox" class="form-check-input ready-item-checkbox" value="{{ item.id }}"></td>
-                        <td><a href="{% url 'order_detail' item.order.id %}">{{ item.order.id }}</a></td>
-                        <td>{{ item.product.name }}</td>
-                        <td>{{ item.order.customer.name }}</td>
-                        <td>
-                            {% for color in item.ordercolor.all %}
-                                <span class="badge bg-info text-dark">{{ color.part }}: {{ color.code }}</span>
-                            {% endfor %}
-                        </td>
-                        <td>{{ item.quantity }}</td>
-                        <td>
-                            <a href="{% url 'item_detail' item.id %}" class="btn btn-sm btn-outline-primary" title="مشاهده"><i class="bi bi-eye"></i></a>
-                            <a href="{% url 'assign_painting_process' item.id %}" class="btn btn-sm btn-outline-secondary" title="اختصاص روند"><i class="bi bi-palette"></i></a>
-                        </td>
-                    </tr>
-                    {% empty %}
-                    <tr><td colspan="7" class="text-center py-4 text-muted">همه آیتم‌های آماده برنامه‌ریزی شده‌اند.</td></tr>
-                    {% endfor %}
-                </tbody>
-            </table>
-        </div>
-        {% if ready_unscheduled %}
-        <div class="p-3 border-top bg-light">
-            <div class="d-flex flex-wrap gap-2 align-items-center">
-                <label class="small mb-0">افزودن انتخاب‌شده‌ها به تاریخ:</label>
-                <input type="text" id="readyScheduleDateInput" class="form-control form-control-sm" style="width:140px" value="{{ schedule_date }}" placeholder="1405-04-28">
-                <button type="button" id="addReadyToScheduleBtn" class="btn btn-sm btn-primary" disabled>
-                    <i class="bi bi-calendar-plus"></i> افزودن به برنامه
-                </button>
-            </div>
-        </div>
-        {% endif %}
     </div>
 </div>
 {% endif %}
@@ -218,7 +146,6 @@ $(function () {
     var csrf = '{{ csrf_token }}';
     var currentDate = '{{ selected_date_str }}';
 
-    // تخصیص خودکار
     $('#autoAssignBtn').on('click', function () {
         if (!confirm('آیا از اجرای تخصیص خودکار اطمینان دارید؟')) return;
         $.ajax({
@@ -234,7 +161,6 @@ $(function () {
         });
     });
 
-    // تخصیص دستی کارگر (با فیلتر مهارت)
     $('.worker-select').on('change', function () {
         var taskId = $(this).data('task-id');
         var workerId = $(this).val();
@@ -254,23 +180,18 @@ $(function () {
         });
     });
 
-    // افزودن آیتم‌های آماده به برنامه
-    $('#addReadyToScheduleBtn').on('click', function () {
-        var itemIds = [];
-        $('.ready-item-checkbox:checked').each(function () { itemIds.push($(this).val()); });
-        if (itemIds.length === 0) { alert('هیچ آیتمی انتخاب نشده است'); return; }
-        var date = $('#readyScheduleDateInput').val();
-        if (!date) { alert('تاریخ برنامه را وارد کنید'); return; }
-        if (!confirm(itemIds.length + ' آیتم به برنامه اضافه شود؟')) return;
+    $('#clearScheduleBtn').on('click', function () {
+        if (!confirm('آیا از پاک کردن تمام برنامه‌ریزی‌های این تاریخ اطمینان دارید؟ این عمل قابل بازگشت نیست.')) return;
+        var date = '{{ selected_date_str }}';
         $.ajax({
-            url: '{% url "painting_add_to_schedule" %}',
+            url: '{% url "painting_clear_schedule" %}',
             method: 'POST',
             headers: {'X-Requested-With': 'XMLHttpRequest'},
-            data: {'csrfmiddlewaretoken': csrf, 'item_ids[]': itemIds, 'date': date},
+            data: {'csrfmiddlewaretoken': '{{ csrf_token }}', 'date': date},
             success: function (data) {
                 if (data.success) {
                     alert(data.message);
-                    window.location.href = data.redirect || '{% url "painting_schedule" %}?date=' + date;
+                    location.reload();
                 } else {
                     alert('خطا: ' + data.error);
                 }
@@ -278,18 +199,6 @@ $(function () {
             error: function () { alert('خطای ارتباط با سرور'); }
         });
     });
-
-    // انتخاب همه آیتم‌های آماده
-    $('#selectAllReady').on('change', function () {
-        $('.ready-item-checkbox').prop('checked', $(this).prop('checked'));
-        updateReadyBtn();
-    });
-    $('.ready-item-checkbox').on('change', updateReadyBtn);
-
-    function updateReadyBtn() {
-        var any = $('.ready-item-checkbox:checked').length > 0;
-        $('#addReadyToScheduleBtn').prop('disabled', !any);
-    }
 });
 </script>
 {% endblock %}

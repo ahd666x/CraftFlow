@@ -121,11 +121,10 @@ class Order(models.Model):
             parse_size_string,
             apply_size_adjustment,
             update_barcode_size,
+            get_painting_process_for_color,
+            get_unique_color_codes_for_item,
         )
-        from .models import PaintingProcess
-
-        if self.tasks.exists():
-            return False
+        from .models import ProductionTask
 
         tasks_to_create = []
         with transaction.atomic():
@@ -201,45 +200,48 @@ class Order(models.Model):
                                 part=dynamic_part,
                                 station_name=station_name.lower(),
                                 step_order=current_step,
-                                quantity=total_qty,
+                                quantity=quantity,
                                 status='pending' if idx == 0 else 'waiting'
                             )
                         )
 
-            # Phase 2: paint tasks per unique color_part per OrderItem
+            # Phase 2: paint tasks per unique color code per OrderItem
             for item in self.items.all():
+                color_codes = get_unique_color_codes_for_item(item)
                 item_colors = {c.part: c.code for c in item.ordercolor.all()}
 
-                unique_color_parts = set()
-                for bom_entry in item.product.bom.all():
-                    if bom_entry.color_part:
-                        unique_color_parts.add(bom_entry.color_part)
-
-                for color_part in unique_color_parts:
-                    color_code = item_colors.get(color_part)
-                    if not color_code or color_code == 'nan':
-                        continue
-
-                    painting_process = None
-                    for process in PaintingProcess.objects.filter(is_active=True):
-                        if color_code in (process.color_codes or []):
-                            painting_process = process
-                            break
-
+                for color_code in color_codes:
+                    painting_process = get_painting_process_for_color(color_code)
                     if not painting_process:
                         continue
 
                     stages = painting_process.stages.all().order_by('order')
-                    base_step = current_step
-                    sample_part = item.product.bom.filter(color_part=color_part).first()
+                    max_step = ProductionTask.objects.filter(order=self).aggregate(
+                        max_step=models.Max('step_order')
+                    )['max_step'] or 0
+                    base_step = max_step + 1
+
+                    sample_part = item.product.bom.first().part if item.product.bom.exists() else None
                     if not sample_part:
                         continue
 
-                    create_paint_tasks(
-                        tasks_to_create, self, sample_part.part, item.quantity,
-                        painting_process, base_step, order_item=item, color_part=color_part
-                    )
-                    current_step += len(stages)
+                    total_qty = item.quantity
+                    color_part_name = next((part for part, code in item_colors.items() if code == color_code), f"رنگ {color_code}")
+
+                    for idx, stage in enumerate(stages, start=1):
+                        tasks_to_create.append(
+                            ProductionTask(
+                                order=self,
+                                part=sample_part,
+                                station_name='paint',
+                                step_order=base_step + idx,
+                                quantity=total_qty,
+                                status='pending' if idx == 1 else 'waiting',
+                                painting_stage=stage,
+                                order_item=item,
+                                color_part=color_part_name,
+                            )
+                        )
 
             if tasks_to_create:
                 ProductionTask.objects.bulk_create(tasks_to_create)
@@ -762,17 +764,19 @@ class PaintingStage(models.Model):
         return f"{self.process.name} - مرحله {self.order}: {self.name}"
 
 
-def create_paint_tasks(task_list, order, part, total_qty, painting_process, base_step, order_item=None, color_part=''):
+def create_paint_tasks(tasks_list, order, part, quantity, process, base_step, order_item=None, color_part=''):
     """ایجاد تسک‌های نقاشی برای یک قطعه/آیتم و افزودن به task_list."""
-    stages = painting_process.stages.all().order_by('order')
+    from .models import ProductionTask
+
+    stages = process.stages.all().order_by('order')
     for idx, stage in enumerate(stages, start=1):
-        task_list.append(
+        tasks_list.append(
             ProductionTask(
                 order=order,
                 part=part,
                 station_name='paint',
                 step_order=base_step + idx,
-                quantity=total_qty,
+                quantity=quantity,
                 status='pending' if idx == 1 else 'waiting',
                 painting_stage=stage,
                 order_item=order_item,
