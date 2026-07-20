@@ -129,6 +129,12 @@ def get_unique_color_codes_for_item(item):
                 color_codes.add(str(color.code))
     else:
         default_colors = item.product.default_colors or {}
+        if isinstance(default_colors, str):
+            try:
+                import json
+                default_colors = json.loads(default_colors) or {}
+            except (ValueError, TypeError):
+                default_colors = {}
         for code in default_colors.values():
             if code and code != 'nan':
                 color_codes.add(str(code))
@@ -169,26 +175,27 @@ def auto_assign_paint_tasks(target_date=None):
     from .models import ProductionTask, WorkerProfile
     from django.db.models import Count, Q
 
+    reference_date = target_date.togregorian() if target_date else timezone.localdate()
+
     tasks_qs = ProductionTask.objects.filter(
         station_name='paint',
         assigned_worker__isnull=True,
         status__in=['pending', 'waiting'],
     )
     if target_date:
-        gregorian = target_date.togregorian()
-        tasks_qs = tasks_qs.filter(scheduled_start__date=gregorian)
+        tasks_qs = tasks_qs.filter(scheduled_start__date=reference_date)
 
     tasks = list(
         tasks_qs.select_related('painting_stage', 'order_item').order_by('scheduled_start', 'step_order')
     )
 
     if not tasks:
-        return
+        return 0
 
-    day_start = timezone.make_aware(datetime.combine(timezone.localdate(), time(8, 0)))
-    day_end = timezone.make_aware(datetime.combine(timezone.localdate(), time(16, 30)))
-    break_start = timezone.make_aware(datetime.combine(timezone.localdate(), time(12, 30)))
-    break_end = timezone.make_aware(datetime.combine(timezone.localdate(), time(13, 30)))
+    day_start = timezone.make_aware(datetime.combine(reference_date, time(8, 0)))
+    day_end = timezone.make_aware(datetime.combine(reference_date, time(16, 30)))
+    break_start = timezone.make_aware(datetime.combine(reference_date, time(12, 30)))
+    break_end = timezone.make_aware(datetime.combine(reference_date, time(13, 30)))
 
     def next_available_start(start):
         if start < day_start:
@@ -196,25 +203,29 @@ def auto_assign_paint_tasks(target_date=None):
         if break_start <= start < break_end:
             return break_end
         if start >= day_end:
-            next_day = (timezone.localdate() + timedelta(days=1))
+            next_day = reference_date + timedelta(days=1)
             return timezone.make_aware(datetime.combine(next_day, time(8, 0)))
         return start
 
-    worker_load = {}
-    for wp in WorkerProfile.objects.annotate(
+    paint_workers_qs = WorkerProfile.objects.filter(stage='paint').annotate(
         active_tasks=Count(
             'user__assigned_tasks',
             filter=Q(user__assigned_tasks__station_name='paint', user__assigned_tasks__status__in=['pending', 'waiting'])
         )
-    ):
+    )
+
+    worker_load = {}
+    for wp in paint_workers_qs:
         worker_load[wp.user_id] = (wp, wp.active_tasks)
+
+    all_paint_workers = list(paint_workers_qs)
 
     assigned_task_ids = set()
     for task in tasks:
         skill = task.painting_stage.required_skill if task.painting_stage else 'painter'
 
         candidates = [
-            wp for wp in WorkerProfile.objects.all()
+            wp for wp in all_paint_workers
             if skill in (wp.skills or [])
         ]
 
@@ -256,22 +267,50 @@ def parse_jalali_date(date_str):
 
 def get_painting_ready_items_queryset(search=None, process_id=None):
     """
-    بازگرداندن Queryset از آیتم‌های سفارش که لاگ مونتاژ اول (mon) در ProductionLog دارند.
-    (بدون در نظر گرفتن وضعیت تسک نقاشی)
+    آیتم‌های آماده نقاشی:
+    - لاگ مونتاژ اول (mon) داشته باشند
+    - لاگ نقاشی (paint) نداشته باشند
+    - لاگ بسته‌بندی (packaging) نداشته باشند
+    - حداقل یک تسک نقاشی pending/waiting داشته باشند یا اصلاً تسک نقاشی نداشته باشند
     """
     from django.db.models import Exists, OuterRef, Prefetch, Q
 
-    from .models import OrderItem, ProductionLog
+    from .models import OrderItem, ProductionLog, ProductionTask
 
     has_mon_log = ProductionLog.objects.filter(
         order_item=OuterRef('pk'),
         stage='mon',
     )
+    has_paint_log = ProductionLog.objects.filter(
+        order_item=OuterRef('pk'),
+        stage='paint',
+    )
+    has_packaging_log = ProductionLog.objects.filter(
+        order_item=OuterRef('pk'),
+        stage='packaging',
+    )
+    has_unfinished_paint_task = ProductionTask.objects.filter(
+        order_item=OuterRef('pk'),
+        station_name='paint',
+        status__in=['pending', 'waiting'],
+    )
+    has_any_paint_task = ProductionTask.objects.filter(
+        order_item=OuterRef('pk'),
+        station_name='paint',
+    )
 
     qs = OrderItem.objects.annotate(
         has_mon=Exists(has_mon_log),
+        has_paint_log=Exists(has_paint_log),
+        has_packaging_log=Exists(has_packaging_log),
+        has_unfinished_paint=Exists(has_unfinished_paint_task),
+        has_any_paint=Exists(has_any_paint_task),
     ).filter(
         has_mon=True,
+        has_paint_log=False,
+        has_packaging_log=False,
+    ).filter(
+        Q(has_unfinished_paint=True) | Q(has_any_paint=False)
     ).distinct().select_related(
         'order', 'product', 'order__customer',
     ).prefetch_related(
@@ -297,18 +336,19 @@ def get_painting_ready_items_queryset(search=None, process_id=None):
 
 
 def get_unscheduled_ready_items(search=None, process_id=None):
-    """آیتم‌های آماده که هنوز در برنامه قرار نگرفته‌اند"""
+    """آیتم‌های آماده که هیچ تسک زمان‌بندی‌شده‌ای ندارند (همه تسک‌ها بدون زمان هستند)"""
+    from django.db.models import Exists, OuterRef
+
     from .models import ProductionTask
 
     ready = get_painting_ready_items_queryset(search=search, process_id=process_id)
-    unscheduled_ids = ProductionTask.objects.filter(
-        station_name='paint',
-        status__in=['pending', 'waiting'],
-        scheduled_start__isnull=True,
-        order_item__isnull=False,
-    ).values_list('order_item_id', flat=True).distinct()
 
-    return ready.filter(pk__in=unscheduled_ids)
+    has_scheduled_task = ProductionTask.objects.filter(
+        order_item=OuterRef('pk'),
+        station_name='paint',
+        scheduled_start__isnull=False,
+    )
+    return ready.annotate(_has_scheduled=Exists(has_scheduled_task)).filter(_has_scheduled=False)
 
 
 def schedule_paint_items_for_date(item_ids, target_jdate):
@@ -370,6 +410,318 @@ def schedule_paint_items_for_date(item_ids, target_jdate):
             scheduled_count += 1
 
     return scheduled_count
+
+
+def get_item_paint_preview(item):
+    """
+    پیش‌نمایش وضعیت نقاشی یک آیتم: رنگ‌ها، روند(های) تشخیص‌داده‌شده،
+    تعداد مراحل و زمان تخمینی. برای نمایش در جدول «آماده نقاشی» بدون نیاز به ساخت تسک.
+    """
+    color_codes = get_unique_color_codes_for_item(item)
+    result = {
+        'item_id': item.id,
+        'color_codes': color_codes,
+        'processes': [],
+        'unmatched_codes': [],
+        'already_has_tasks': item.paint_tasks.filter(station_name='paint').exists(),
+        'total_minutes': 0,
+        'ok': True,
+        'reason': None,
+    }
+    if not color_codes:
+        result['ok'] = False
+        result['reason'] = 'no_color'
+        return result
+
+    for code in color_codes:
+        process = get_painting_process_for_color(code)
+        if not process:
+            result['unmatched_codes'].append(code)
+            continue
+        stage_count = process.stages.count()
+        total_minutes = sum(s.duration_minutes for s in process.stages.all())
+        result['processes'].append({
+            'color_code': code,
+            'process_name': process.name,
+            'stage_count': stage_count,
+            'total_minutes': total_minutes,
+        })
+        result['total_minutes'] += total_minutes
+
+    if not result['processes']:
+        result['ok'] = False
+        result['reason'] = 'no_process_match'
+
+    return result
+
+
+def create_and_schedule_items_for_date(item_ids, target_jdate=None):
+    """
+    برای هر آیتم انتخاب‌شده:
+      ۱. اگر تسک نقاشی ندارد، بر اساس کدهای رنگ تسک‌ها را می‌سازد (بدون BOM/Part)
+      ۲. سپس همه‌ی تسک‌های بدون‌زمانِ این آیتم‌ها را زمان‌بندی می‌کند
+      - اگر target_jdate داده شود: در همان روز زمان‌بندی می‌کند
+      - اگر None باشد: اولین روز با ظرفیت کافی (از امروز) پیدا و زمان‌بندی می‌شود
+    """
+    from .models import OrderItem, ProductionTask, create_paint_tasks
+
+    items = OrderItem.objects.filter(pk__in=item_ids).prefetch_related('ordercolor', 'paint_tasks')
+
+    created_items = []
+    skipped = []
+    new_tasks = []
+
+    for item in items:
+        has_existing_tasks = item.paint_tasks.filter(station_name='paint').exists()
+        if has_existing_tasks:
+            continue
+
+        color_codes = get_unique_color_codes_for_item(item)
+        item_colors = {c.part: c.code for c in item.ordercolor.all()}
+        if not color_codes:
+            skipped.append({'item_id': item.id, 'reason': 'no_color'})
+            continue
+
+        base_step = 0
+        item_created_any = False
+        for color_code in color_codes:
+            process = get_painting_process_for_color(color_code)
+            if not process:
+                continue
+            color_part_name = next(
+                (part for part, code in item_colors.items() if code == color_code),
+                f"رنگ {color_code}"
+            )
+            create_paint_tasks(
+                tasks_list=new_tasks,
+                order=item.order,
+                quantity=item.quantity,
+                process=process,
+                base_step=base_step,
+                order_item=item,
+                color_part=color_part_name,
+            )
+            base_step += process.stages.count()
+            item_created_any = True
+
+        if item_created_any:
+            created_items.append(item.id)
+        else:
+            skipped.append({'item_id': item.id, 'reason': 'no_process_match'})
+
+    if new_tasks:
+        ProductionTask.objects.bulk_create(new_tasks)
+
+    if target_jdate:
+        scheduled_date = target_jdate
+        scheduled_count = schedule_paint_tasks_for_items(item_ids, target_jdate)
+    else:
+        scheduled_count, scheduled_date = schedule_paint_items_auto(item_ids)
+
+    return {
+        'scheduled_count': scheduled_count,
+        'scheduled_date': scheduled_date,
+        'created_items': created_items,
+        'skipped': skipped,
+    }
+
+
+def schedule_paint_items_auto(item_ids, start_jdate=None):
+    """
+    زمان‌بندی تسک‌های نقاشی آیتم‌های انتخاب‌شده از اولین روز (start_jdate یا امروز)
+    به بعد. رعایت ساعت کاری ۸:۰۰–۱۶:۳۰ و وقفه ناهار ۱۲:۳۰–۱۳:۳۰.
+    اگر تسک‌ها در یک روز جا نشوند، باقی‌مانده به روزهای بعد منتقل می‌شود.
+    بازگشت: (scheduled_count, first_scheduled_jdate)
+    """
+    import jdatetime
+
+    from .models import ProductionTask
+
+    if start_jdate is None:
+        start_jdate = jdatetime.date.today()
+
+    remaining_ids = list(
+        ProductionTask.objects.filter(
+            order_item_id__in=item_ids,
+            station_name='paint',
+            status__in=['pending', 'waiting'],
+            scheduled_start__isnull=True,
+        ).values_list('id', flat=True)
+    )
+    if not remaining_ids:
+        return 0, None
+
+    scheduled_count = 0
+    target_jdate = start_jdate
+
+    # هر روز تا جایی که ظرفیت دارد تسک زمان‌بندی می‌شود؛ باقی‌مانده روز بعد.
+    safety = 0
+    while remaining_ids and safety < 400:
+        scheduled_now, target_jdate = _schedule_day_slice(remaining_ids, target_jdate)
+        scheduled_count += scheduled_now
+        remaining_ids = list(
+            ProductionTask.objects.filter(
+                id__in=remaining_ids,
+                station_name='paint',
+                status__in=['pending', 'waiting'],
+                scheduled_start__isnull=True,
+            ).values_list('id', flat=True)
+        )
+        target_jdate = target_jdate + jdatetime.timedelta(days=1)
+        safety += 1
+
+    return scheduled_count, target_jdate - jdatetime.timedelta(days=1)
+
+
+def _schedule_day_slice(task_ids, target_jdate):
+    """زمان‌بندی تا جایی که ظرفیت روز اجازه دهد؛ بازگشت (تعداد، تاریخ هدف)"""
+    from datetime import datetime, time, timedelta
+
+    from django.db.models import Max
+    from django.utils import timezone
+
+    from .models import ProductionTask
+
+    gregorian = target_jdate.togregorian()
+    day_start = timezone.make_aware(datetime.combine(gregorian, time(8, 0)))
+    day_end = timezone.make_aware(datetime.combine(gregorian, time(16, 30)))
+    break_start = timezone.make_aware(datetime.combine(gregorian, time(12, 30)))
+    break_end = timezone.make_aware(datetime.combine(gregorian, time(13, 30)))
+
+    def next_available_start(start):
+        if start is None:
+            return None
+        if start < day_start:
+            return day_start
+        if break_start <= start < break_end:
+            return break_end
+        if start >= day_end:
+            return None
+        return start
+
+    last_end = ProductionTask.objects.filter(
+        station_name='paint',
+        scheduled_end__date=gregorian,
+    ).aggregate(max_end=Max('scheduled_end'))['max_end']
+
+    current_start = next_available_start(last_end) if last_end else day_start
+    scheduled_count = 0
+
+    tasks = list(
+        ProductionTask.objects.filter(
+            id__in=task_ids,
+            station_name='paint',
+            status__in=['pending', 'waiting'],
+            scheduled_start__isnull=True,
+        ).select_related('painting_stage').order_by('step_order')
+    )
+
+    for task in tasks:
+        current_start = next_available_start(current_start)
+        if current_start is None:
+            break
+        duration = task.painting_stage.duration_minutes if task.painting_stage else 60
+        drying = task.painting_stage.drying_time_minutes if task.painting_stage else 0
+        if duration <= 0:
+            duration = 1
+        end = current_start + timedelta(minutes=duration)
+        # اگر انتهای تسک از پایان روز یا شروع ناهار بگذرد، به روز بعد موکول شود
+        if end > day_end or (break_start <= current_start < break_end):
+            break
+        task.scheduled_start = current_start
+        task.scheduled_end = end
+        task.save(update_fields=['scheduled_start', 'scheduled_end'])
+        current_start = end + timedelta(minutes=drying)
+        scheduled_count += 1
+
+    return scheduled_count, target_jdate
+
+
+def schedule_paint_tasks_for_items(item_ids, target_jdate):
+    """زمان‌بندی تسک‌های نقاشی آیتم‌های انتخاب‌شده در یک روز"""
+    from datetime import datetime, time, timedelta
+
+    from django.db.models import Max
+    from django.utils import timezone
+
+    from .models import ProductionTask
+
+    tasks = list(
+        ProductionTask.objects.filter(
+            order_item_id__in=item_ids,
+            station_name='paint',
+            status__in=['pending', 'waiting'],
+            scheduled_start__isnull=True,
+        ).select_related('painting_stage').order_by('step_order')
+    )
+    if not tasks:
+        return 0
+
+    gregorian = target_jdate.togregorian()
+    day_start = timezone.make_aware(datetime.combine(gregorian, time(8, 0)))
+    day_end = timezone.make_aware(datetime.combine(gregorian, time(16, 30)))
+    break_start = timezone.make_aware(datetime.combine(gregorian, time(12, 30)))
+    break_end = timezone.make_aware(datetime.combine(gregorian, time(13, 30)))
+
+    def next_available_start(start):
+        if start < day_start:
+            return day_start
+        if break_start <= start < break_end:
+            return break_end
+        if start >= day_end:
+            next_day = (target_jdate + timedelta(days=1)).togregorian()
+            return timezone.make_aware(datetime.combine(next_day, time(8, 0)))
+        return start
+
+    last_end = ProductionTask.objects.filter(
+        station_name='paint',
+        scheduled_end__date=gregorian,
+        order_item_id__in=item_ids,
+    ).aggregate(max_end=Max('scheduled_end'))['max_end']
+
+    current_start = next_available_start(last_end) if last_end else day_start
+    scheduled_count = 0
+
+    for task in tasks:
+        current_start = next_available_start(current_start)
+        duration = task.painting_stage.duration_minutes if task.painting_stage else 60
+        drying = task.painting_stage.drying_time_minutes if task.painting_stage else 0
+        task.scheduled_start = current_start
+        task.scheduled_end = current_start + timedelta(minutes=duration)
+        task.save(update_fields=['scheduled_start', 'scheduled_end'])
+        current_start = task.scheduled_end + timedelta(minutes=drying)
+        scheduled_count += 1
+
+    return scheduled_count
+
+
+def repaint_item_ids_for_date(item_ids, target_jdate):
+    """
+    بازنشانی و زمان‌بندی مجدد تسک‌های نقاشی آیتم‌های انتخاب‌شده.
+    این تابع برای رفع مشکلات برنامه‌ریزی اشتباه استفاده می‌شود:
+    - همه‌ی تسک‌های نقاشی این آیتم‌ها در تاریخ موردنظر حذف می‌شوند
+    - مجدداً طبق منطق درست ایجاد و زمان‌بندی می‌شوند
+    """
+    from .models import OrderItem, ProductionTask
+
+    items = OrderItem.objects.filter(pk__in=item_ids)
+    task_ids = []
+    for item in items:
+        task_ids.extend(
+            ProductionTask.objects.filter(
+                order_item=item,
+                station_name='paint',
+                scheduled_start__date=target_jdate.togregorian(),
+            ).values_list('pk', flat=True)
+        )
+
+    if task_ids:
+        done_count = ProductionTask.objects.filter(pk__in=task_ids, status='done').count()
+        if done_count:
+            raise ValueError(f'{done_count} تسک قبلاً انجام شده و نمی‌تواند بازنشانی شود.')
+        ProductionTask.objects.filter(pk__in=task_ids).delete()
+
+    return create_and_schedule_items_for_date(item_ids, target_jdate)
 
 
 def painting_nav_context():

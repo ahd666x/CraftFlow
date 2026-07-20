@@ -577,6 +577,24 @@ class PaintingProcessForm(forms.ModelForm):
         except (json.JSONDecodeError, TypeError):
             raise forms.ValidationError('فرمت JSON نامعتبر است. مثال: ["8","9"]')
 
+    def clean(self):
+        cleaned = super().clean()
+        is_active = cleaned.get('is_active', True)
+        codes = cleaned.get('color_codes') or []
+        if is_active and codes:
+            others = PaintingProcess.objects.filter(is_active=True)
+            if self.instance and self.instance.pk:
+                others = others.exclude(pk=self.instance.pk)
+            for other in others:
+                other_codes = set(str(c) for c in (other.color_codes or []))
+                overlap = other_codes.intersection(str(c) for c in codes)
+                if overlap:
+                    self.add_error(
+                        'color_codes',
+                        f'کد(های) رنگی {", ".join(overlap)} در روند فعال دیگری ("{other.name}") قبلاً استفاده شده‌اند.'
+                    )
+        return cleaned
+
 
 class PaintingStageForm(forms.ModelForm):
     class Meta:

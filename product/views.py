@@ -354,6 +354,8 @@ def item_detail(request, pk):
     # همچنین نگاشت از base_part_id برای قطعات داینامیک
     task_map = {}
     for task in all_tasks:
+        if not task.part:
+            continue
         task_map[(task.part_id, task.station_name)] = task.status
         if task.part.base_part_id:
             # اگر قطعه داینامیک است، وضعیت را به قطعه اصلی هم نسبت بده
@@ -378,6 +380,7 @@ def item_detail(request, pk):
         'stage_status_list': stage_status_list,
         'station_choices': STATION_CHOICES,
         'bom_parts': bom_parts,
+        'has_paint_tasks': item.paint_tasks.exists(),
     }
     return render(request, 'item.html', context)
 
@@ -1451,7 +1454,9 @@ def order_detail(request, order_id):
     
     context = {
         'order': order,
-        'station_choices': STATION_CHOICES,  # برای استفاده در سربرگ جدول
+        'station_choices': STATION_CHOICES,
+        'has_any_tasks': order.tasks.exists(),
+        'has_paint_tasks': order.tasks.filter(station_name='paint').exists(),
     }
     return render(request, 'orders/order_detail.html', context)
 
@@ -2935,11 +2940,20 @@ def assign_painting_process(request, item_id):
 
     if request.method == 'POST':
         with transaction.atomic():
-            ProductionTask.objects.filter(
+            existing_paint_tasks = ProductionTask.objects.filter(
                 order=item.order,
                 station_name='paint',
                 order_item=item
-            ).delete()
+            )
+            if existing_paint_tasks.filter(status='done').exists():
+                messages.error(
+                    request,
+                    "❌ برخی از مراحل نقاشی این آیتم قبلاً انجام شده‌اند. "
+                    "برای جلوگیری از از دست رفتن سابقه، ابتدا آن‌ها را به صورت دستی مدیریت کنید."
+                )
+                return redirect('item_detail', pk=item_id)
+
+            existing_paint_tasks.delete()
 
             global_base = ProductionTask.objects.filter(order=item.order).aggregate(
                 max_step=models.Max('step_order')
@@ -2960,18 +2974,15 @@ def assign_painting_process(request, item_id):
                     errors.append(f"❌ کد رنگ {color_code}: روند نقاشی فعالی یافت نشد.")
                     continue
 
-                sample_part = item.product.bom.first().part if item.product.bom.exists() else None
-                if not sample_part:
-                    errors.append(f"❌ کد رنگ {color_code}: قطعه‌ای در BOM یافت نشد.")
-                    continue
-
                 total_qty = item.quantity
-                color_part_name = next((part for part, code in item_colors.items() if code == color_code), f"رنگ {color_code}")
+                color_part_name = next(
+                    (part for part, code in item_colors.items() if code == color_code),
+                    f"رنگ {color_code}"
+                )
 
                 create_paint_tasks(
                     tasks_list=new_tasks,
                     order=item.order,
-                    part=sample_part,
                     quantity=total_qty,
                     process=painting_process,
                     base_step=global_base,
@@ -2996,9 +3007,11 @@ def assign_painting_process(request, item_id):
         return redirect('item_detail', pk=item_id)
 
     color_codes = get_unique_color_codes_for_item(item)
+    ROKESHI_CODES = {'8', '9', '10', '11'}
+    color_info = [{'code': c, 'is_rokeshi': c in ROKESHI_CODES} for c in color_codes]
     return render(request, 'assign_painting.html', {
         'item': item,
-        'color_codes': color_codes,
+        'color_info': color_info,
         'has_colors': item.ordercolor.exists() or bool(item.product.default_colors),
     })
 
@@ -3231,13 +3244,21 @@ def painting_stages_view(request, process_id=None):
             return JsonResponse({'success': True})
 
         elif action == 'reorder':
-            # تغییر ترتیب مراحل
             stage_ids = request.POST.getlist('stage_ids[]')
             with transaction.atomic():
+                stages = list(PaintingStage.objects.filter(pk__in=stage_ids))
+                stage_map = {str(s.pk): s for s in stages}
+
+                for offset, stage_id in enumerate(stage_ids, start=1):
+                    stage = stage_map[str(stage_id)]
+                    stage.order = -offset
+                    stage.save(update_fields=['order'])
+
                 for idx, stage_id in enumerate(stage_ids, start=1):
-                    stage = PaintingStage.objects.get(pk=stage_id)
+                    stage = stage_map[str(stage_id)]
                     stage.order = idx
-                    stage.save()
+                    stage.save(update_fields=['order'])
+
             return JsonResponse({'success': True})
 
     # GET: نمایش لیست مراحل
@@ -3367,7 +3388,7 @@ def painting_workers_view(request):
 @login_required
 @admin_or_manager_required
 def painting_schedule_view(request):
-    """برنامه‌ریزی و تخصیص کارگران به تسک‌های نقاشی"""
+    """برنامه‌ریزی روزانه به‌شکل بورد کانبان"""
     from .utils import get_unscheduled_ready_items, parse_jalali_date, painting_nav_context
 
     date_str = request.GET.get('date')
@@ -3379,42 +3400,30 @@ def painting_schedule_view(request):
             station_name='paint',
             scheduled_start__date=gregorian_date,
         ).select_related(
-            'order_item__order', 'order_item__product', 'order_item__product__category', 'painting_stage', 'assigned_worker',
+            'order_item__order', 'order_item__product', 'order_item__product__category',
+            'painting_stage', 'assigned_worker',
         ).prefetch_related('order_item__ordercolor').order_by('scheduled_start', 'step_order')
     )
 
-    grouped_tasks = {}
-    for task in tasks:
-        if task.assigned_worker:
-            label = task.assigned_worker.get_full_name() or task.assigned_worker.username
-        else:
-            label = 'تخصیص نشده'
-        grouped_tasks.setdefault(label, []).append(task)
+    workers = list(WorkerProfile.objects.filter(stage='paint').select_related('user'))
 
-    workers = WorkerProfile.objects.filter(stage='paint').select_related('user')
+    tasks_by_worker = {}
+    for t in tasks:
+        tasks_by_worker.setdefault(t.assigned_worker_id, []).append(t)
 
-    from collections import defaultdict
-    workers_by_skill = defaultdict(list)
-    for wp in workers:
-        for skill in (wp.skills or []):
-            workers_by_skill[skill].append(wp)
+    worker_columns = [{
+        'worker_id': wp.user_id,
+        'label': wp.user.get_full_name() or wp.user.username,
+        'skills': wp.skills or [],
+        'tasks': tasks_by_worker.get(wp.user_id, []),
+    } for wp in workers]
 
-    unassigned_tasks = list(
-        ProductionTask.objects.filter(
-            station_name='paint',
-            assigned_worker__isnull=True,
-            status__in=['pending', 'waiting'],
-            scheduled_start__date=gregorian_date,
-        ).select_related(
-            'order_item__order', 'order_item__product', 'order_item__product__category', 'painting_stage',
-        ).prefetch_related('order_item__ordercolor').order_by('scheduled_start', 'step_order')
-    )
-
+    unassigned_tasks = tasks_by_worker.get(None, [])
     ready_unscheduled = get_unscheduled_ready_items()
 
     stats = {
         'total_tasks': len(tasks),
-        'assigned_tasks': sum(1 for t in tasks if t.assigned_worker),
+        'assigned_tasks': sum(1 for t in tasks if t.assigned_worker_id),
         'unassigned_tasks': len(unassigned_tasks),
         'ready_unscheduled': ready_unscheduled.count(),
         'total_duration': sum(t.painting_stage.duration_minutes if t.painting_stage else 0 for t in tasks),
@@ -3422,14 +3431,11 @@ def painting_schedule_view(request):
 
     context = {
         'active_tab': 'schedule',
-        'grouped_tasks': grouped_tasks,
+        'worker_columns': worker_columns,
         'unassigned_tasks': unassigned_tasks,
         'ready_unscheduled': ready_unscheduled,
         'selected_date': selected_date,
         'selected_date_str': selected_date.strftime('%Y-%m-%d'),
-        'selected_date_display': selected_date.strftime('%Y/%m/%d'),
-        'workers': workers,
-        'workers_by_skill': dict(workers_by_skill),
         'stats': stats,
         'yesterday': (selected_date - jdatetime.timedelta(days=1)).strftime('%Y-%m-%d'),
         'tomorrow': (selected_date + jdatetime.timedelta(days=1)).strftime('%Y-%m-%d'),
@@ -3442,17 +3448,21 @@ def painting_schedule_view(request):
 @login_required
 @admin_or_manager_required
 def painting_ready_list(request):
-    """آیتم‌های آماده نقاشی (لاگ mon + تسک pending)"""
-    from .utils import get_painting_ready_items_queryset, painting_nav_context
+    """آیتم‌های آماده نقاشی با پیش‌نمایش وضعیت"""
+    from .utils import get_painting_ready_items_queryset, painting_nav_context, get_item_paint_preview
 
     search = request.GET.get('search')
     process_id = request.GET.get('process')
 
     ready_items = get_painting_ready_items_queryset(search=search, process_id=process_id)
+    items_with_preview = [
+        {'item': item, 'preview': get_item_paint_preview(item)}
+        for item in ready_items
+    ]
 
     context = {
         'active_tab': 'ready',
-        'items': ready_items,
+        'items_with_preview': items_with_preview,
         'search': search,
         'processes': PaintingProcess.objects.filter(is_active=True),
         'selected_process': process_id,
@@ -3465,8 +3475,9 @@ def painting_ready_list(request):
 @login_required
 @admin_or_manager_required
 def painting_add_to_schedule(request):
-    """افزودن آیتم‌های انتخاب‌شده به برنامه روزانه (AJAX)"""
-    from .utils import parse_jalali_date, schedule_paint_items_for_date
+    """افزودن خودکار آیتم‌های انتخاب‌شده به برنامه امروز + تخصیص خودکار کارگر"""
+    import jdatetime
+    from .utils import create_and_schedule_items_for_date, auto_assign_paint_tasks
 
     if request.method != 'POST' or request.headers.get('X-Requested-With') != 'XMLHttpRequest':
         return JsonResponse({'success': False, 'error': 'درخواست نامعتبر'})
@@ -3475,23 +3486,50 @@ def painting_add_to_schedule(request):
     if not item_ids:
         return JsonResponse({'success': False, 'error': 'هیچ آیتمی انتخاب نشده است'})
 
-    try:
-        target_date = parse_jalali_date(request.POST.get('date'))
-    except ValueError as exc:
-        return JsonResponse({'success': False, 'error': str(exc)})
+    date_str = request.POST.get('date') or request.POST.get('target_date')
+    target_date = parse_jalali_date(date_str) if date_str else None
 
     try:
-        count = schedule_paint_items_for_date(item_ids, target_date)
-        if count == 0:
-            return JsonResponse({'success': False, 'error': 'آیتم انتخاب‌شده واجد شرایط نیست یا قبلاً برنامه‌ریزی شده'})
-        return JsonResponse({
-            'success': True,
-            'message': f'{count} تسک به برنامه {target_date.strftime("%Y/%m/%d")} اضافه شد.',
-            'scheduled_count': count,
-            'redirect': reverse('painting_schedule') + f'?date={target_date.strftime("%Y-%m-%d")}',
-        })
+        result = create_and_schedule_items_for_date(item_ids, target_date)
     except Exception as e:
         return JsonResponse({'success': False, 'error': str(e)})
+
+    created_count = len(result.get('created_items') or [])
+    scheduled_count = result.get('scheduled_count') or 0
+    scheduled_date = result.get('scheduled_date') or target_date
+    skipped = result.get('skipped') or []
+
+    total_activity = created_count + scheduled_count
+
+    if total_activity == 0 and skipped:
+        reasons = {'no_color': 'بدون رنگ ثبت‌شده', 'no_process_match': 'روند نقاشی فعالی برای رنگ یافت نشد'}
+        detail = '؛ '.join(f"آیتم {s['item_id']}: {reasons.get(s['reason'], 'نامشخص')}" for s in skipped)
+        error_msg = 'هیچ عملیاتی انجام نشد.'
+        if detail:
+            error_msg += ' جزئیات: ' + detail
+        return JsonResponse({'success': False, 'error': error_msg})
+
+    if scheduled_count > 0:
+        auto_assign_paint_tasks(target_date=target_date)
+
+    message_parts = []
+    if created_count:
+        message_parts.append(f"{created_count} آیتم تسک جدید ایجاد شد")
+    if scheduled_count:
+        message_parts.append(f"{scheduled_count} تسک زمان‌بندی شد")
+    if skipped:
+        message_parts.append(f"{len(skipped)} آیتم رد شد")
+
+    message = ' + '.join(message_parts) if message_parts else 'همه آیتم‌ها قبلاً برنامه‌ریزی شده بودند.'
+
+    return JsonResponse({
+        'success': True,
+        'message': message,
+        'scheduled_count': scheduled_count,
+        'created_count': created_count,
+        'skipped': skipped,
+        'redirect': reverse('painting_schedule') + f'?date={(scheduled_date or jdatetime.date.today()).strftime("%Y-%m-%d")}',
+    })
 
 
 @login_required
@@ -3510,17 +3548,17 @@ def painting_assign_process(request):
 
         try:
             with transaction.atomic():
-                ProductionTask.objects.filter(
-                    order=item.order,
-                    station_name='paint',
-                    order_item=item
-                ).delete()
+                existing = ProductionTask.objects.filter(order=item.order, station_name='paint', order_item=item)
+                if existing.filter(status='done').exists():
+                    return JsonResponse({'success': False, 'error': 'برخی مراحل قبلاً انجام شده‌اند؛ امکان بازسازی خودکار نیست.'})
+                existing.delete()
 
                 global_base = ProductionTask.objects.filter(order=item.order).aggregate(
                     max_step=models.Max('step_order')
                 )['max_step'] or 0
 
                 color_codes = get_unique_color_codes_for_item(item)
+                item_colors = {c.part: c.code for c in item.ordercolor.all()}
                 new_tasks = []
 
                 for color_code in color_codes:
@@ -3528,13 +3566,14 @@ def painting_assign_process(request):
                     if not painting_process:
                         continue
 
-                    sample_part = item.product.bom.first().part if item.product.bom.exists() else None
-                    if not sample_part:
-                        continue
+                    color_part_name = next(
+                        (part for part, code in item_colors.items() if code == color_code),
+                        f"رنگ {color_code}"
+                    )
 
                     create_paint_tasks(
-                        new_tasks, item.order, sample_part, item.quantity,
-                        painting_process, global_base, order_item=item, color_part=f"رنگ {color_code}"
+                        new_tasks, item.order, item.quantity,
+                        painting_process, global_base, order_item=item, color_part=color_part_name
                     )
                     global_base += painting_process.stages.count()
 
@@ -3560,20 +3599,12 @@ def painting_auto_assign(request):
             if request.POST.get('date'):
                 target_date = parse_jalali_date(request.POST.get('date'))
 
-            auto_assign_paint_tasks(target_date=target_date)
-
-            assigned_qs = ProductionTask.objects.filter(
-                station_name='paint',
-                assigned_worker__isnull=False,
-                status__in=['pending', 'waiting'],
-            )
-            if target_date:
-                assigned_qs = assigned_qs.filter(scheduled_start__date=target_date.togregorian())
+            assigned_count = auto_assign_paint_tasks(target_date=target_date)
 
             return JsonResponse({
                 'success': True,
                 'message': 'تخصیص خودکار با موفقیت انجام شد.',
-                'assigned_count': assigned_qs.count(),
+                'assigned_count': assigned_count or 0,
             })
         except Exception as e:
             return JsonResponse({'success': False, 'error': str(e)})
@@ -3626,6 +3657,64 @@ def painting_assign_worker(request):
 
 @login_required
 @admin_or_manager_required
+def painting_unassign_worker(request):
+    """حذف تخصیص کارگر از یک تسک — برای درگ به ستون «بدون تخصیص»"""
+    from .models import ProductionTask
+
+    if request.method == 'POST' and request.headers.get('X-Requested-With') == 'XMLHttpRequest':
+        task_id = request.POST.get('task_id')
+        if not task_id:
+            return JsonResponse({'success': False, 'error': 'اطلاعات ناقص'})
+        task = get_object_or_404(ProductionTask, pk=task_id, station_name='paint')
+        task.assigned_worker = None
+        task.save()
+        return JsonResponse({'success': True})
+
+    return JsonResponse({'success': False, 'error': 'درخواست نامعتبر'})
+
+
+@login_required
+@admin_or_manager_required
+def painting_delete_tasks(request):
+    """حذف چند تسک نقاشی انتخاب‌شده (AJAX) — تسک‌های تکمیل‌شده حذف نمی‌شوند.
+    ورودی: task_ids[] (حذف تسک‌های مشخص) یا item_ids[] (حذف همه تسک‌های نقاشی آیتم‌ها)
+    """
+    from .models import ProductionTask
+
+    if request.method != 'POST' or request.headers.get('X-Requested-With') != 'XMLHttpRequest':
+        return JsonResponse({'success': False, 'error': 'درخواست نامعتبر'})
+
+    task_ids = request.POST.getlist('task_ids[]') or request.POST.getlist('task_ids')
+    item_ids = request.POST.getlist('item_ids[]') or request.POST.getlist('item_ids')
+
+    if not task_ids and not item_ids:
+        return JsonResponse({'success': False, 'error': 'هیچ موردی انتخاب نشده است'})
+
+    qs = ProductionTask.objects.filter(station_name='paint', status__in=['pending', 'waiting'])
+    if item_ids:
+        try:
+            item_ids = [int(i) for i in item_ids]
+        except (ValueError, TypeError):
+            return JsonResponse({'success': False, 'error': 'شناسه‌های آیتم نامعتبر'})
+        qs = qs.filter(order_item_id__in=item_ids)
+    else:
+        try:
+            task_ids = [int(t) for t in task_ids]
+        except (ValueError, TypeError):
+            return JsonResponse({'success': False, 'error': 'شناسه‌های نامعتبر'})
+        qs = qs.filter(pk__in=task_ids)
+
+    deleted = qs.delete()[0]
+
+    return JsonResponse({
+        'success': True,
+        'message': f'{deleted} تسک نقاشی حذف شد.',
+        'deleted_count': deleted,
+    })
+
+
+@login_required
+@admin_or_manager_required
 def painting_clear_schedule(request):
     """پاک کردن تمام برنامه‌ریزی‌های روز انتخاب‌شده (AJAX)"""
     from .utils import parse_jalali_date
@@ -3654,4 +3743,108 @@ def painting_clear_schedule(request):
         'message': f'{count} تسک از برنامه {target_date.strftime("%Y/%m/%d")} حذف شد.',
         'cleared_count': count,
     })
+
+
+@login_required
+@admin_or_manager_required
+def painting_repaint_items(request):
+    """بازنشانی و زمان‌بندی مجدد تسک‌های نقاشی آیتم‌های انتخاب‌شده (AJAX)"""
+    from .utils import parse_jalali_date, repaint_item_ids_for_date
+
+    if request.method != 'POST' or request.headers.get('X-Requested-With') != 'XMLHttpRequest':
+        return JsonResponse({'success': False, 'error': 'درخواست نامعتبر'})
+
+    item_ids = request.POST.getlist('item_ids[]') or request.POST.getlist('item_ids')
+    date_str = request.POST.get('date')
+
+    if not item_ids:
+        return JsonResponse({'success': False, 'error': 'هیچ آیتمی انتخاب نشده است'})
+
+    if not date_str:
+        return JsonResponse({'success': False, 'error': 'تاریخ ارسال نشده'})
+
+    try:
+        target_date = parse_jalali_date(date_str)
+    except ValueError as exc:
+        return JsonResponse({'success': False, 'error': str(exc)})
+
+    try:
+        result = repaint_item_ids_for_date(item_ids, target_date)
+        return JsonResponse({
+            'success': True,
+            'message': f'برنامه‌ریزی مجدد انجام شد. {result.get("scheduled_count", 0)} تسک زمان‌بندی شد.',
+            'result': result,
+            'redirect': reverse('painting_schedule') + f'?date={target_date.strftime("%Y-%m-%d")}',
+        })
+    except Exception as e:
+        return JsonResponse({'success': False, 'error': str(e)})
+
+
+@login_required
+@admin_or_manager_required
+def delete_all_tasks(request, order_id):
+    """حذف تمام تسک‌های تولید شده برای یک سفارش و برگرداندن وضعیت به draft"""
+    order = get_object_or_404(Order, pk=order_id)
+
+    done_tasks = order.tasks.filter(status='done')
+    if done_tasks.exists():
+        messages.warning(request, f"{done_tasks.count()} تسک قبلاً تکمیل شده‌اند. با حذف آن‌ها، سابقه از بین می‌رود.")
+
+    with transaction.atomic():
+        order.tasks.all().delete()
+        order.status = 'draft'
+        order.save(update_fields=['status'])
+
+    messages.success(request, f"✅ تمام تسک‌های سفارش {order.id} حذف شدند و وضعیت به پیش‌نویس برگردانده شد.")
+    return redirect('order_detail', order_id=order.id)
+
+
+@login_required
+@admin_or_manager_required
+def delete_paint_tasks(request, item_id):
+    """حذف تمام تسک‌های نقاشی یک آیتم سفارش و پاک کردن زمان‌بندی/تخصیص آن‌ها"""
+    item = get_object_or_404(OrderItem, pk=item_id)
+
+    paint_tasks = item.paint_tasks.all()
+    count = paint_tasks.count()
+    if count == 0:
+        messages.warning(request, "هیچ تسک نقاشی‌ای برای این آیتم وجود ندارد.")
+        return redirect('item_detail', pk=item.id)
+
+    done_tasks = paint_tasks.filter(status='done')
+    if done_tasks.exists():
+        messages.warning(request, f"{done_tasks.count()} تسک نقاشی قبلاً تکمیل شده‌اند. با حذف آن‌ها، سابقه از بین می‌رود.")
+
+    with transaction.atomic():
+        paint_tasks.delete()
+
+    messages.success(request, f"✅ {count} تسک نقاشی آیتم {item.id} حذف شدند.")
+    return redirect('item_detail', pk=item.id)
+
+
+@login_required
+@admin_or_manager_required
+def delete_all_paint_tasks_for_order(request, order_id):
+    """حذف تمام تسک‌های نقاشی یک سفارش (همه آیتم‌ها) — سایر تسک‌ها حفظ می‌شوند"""
+    order = get_object_or_404(Order, pk=order_id)
+
+    paint_tasks = order.tasks.filter(station_name='paint')
+    count = paint_tasks.count()
+    if count == 0:
+        messages.warning(request, "هیچ تسک نقاشی‌ای برای این سفارش وجود ندارد.")
+        return redirect('order_detail', order_id=order.id)
+
+    done_tasks = paint_tasks.filter(status='done')
+    if done_tasks.exists():
+        messages.warning(request, f"{done_tasks.count()} تسک نقاشی قبلاً تکمیل شده‌اند. با حذف آن‌ها، سابقه از بین می‌رود.")
+
+    with transaction.atomic():
+        paint_tasks.delete()
+        remaining_tasks = order.tasks.exclude(station_name='paint')
+        if not remaining_tasks.exists():
+            order.status = 'draft'
+            order.save(update_fields=['status'])
+
+    messages.success(request, f"✅ {count} تسک نقاشی سفارش {order.id} حذف شدند.")
+    return redirect('order_detail', order_id=order.id)
 

@@ -15,12 +15,12 @@
 
             <hr>
             <h6>کدهای رنگی شناسایی‌شده:</h6>
-            {% if color_codes %}
+            {% if color_info %}
                 <ul class="list-group list-group-flush mb-3">
-                    {% for code in color_codes %}
+                    {% for info in color_info %}
                         <li class="list-group-item d-flex justify-content-between align-items-center">
-                            کد رنگ: <span class="badge bg-info text-dark">{{ code }}</span>
-                            {% if code in "8,9,10,11" %}
+                            کد رنگ: <span class="badge bg-info text-dark">{{ info.code }}</span>
+                            {% if info.is_rokeshi %}
                                 <span class="badge bg-success">روکشی</span>
                             {% else %}
                                 <span class="badge bg-warning">پوششی</span>
@@ -37,7 +37,7 @@
 
             <form method="post">
                 {% csrf_token %}
-                <button type="submit" class="btn btn-success btn-lg" {% if not color_codes %}disabled{% endif %}>
+                <button type="submit" class="btn btn-success btn-lg" {% if not color_info %}disabled{% endif %}>
                     <i class="bi bi-play-circle"></i> ایجاد تسک‌های نقاشی
                 </button>
             </form>

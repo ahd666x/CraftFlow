@@ -135,7 +135,13 @@ urlpatterns = [
     path('painting/auto-assign/', views.painting_auto_assign, name='painting_auto_assign'),
     path('painting/available-workers/', views.painting_get_available_workers, name='painting_available_workers'),
     path('painting/assign-worker/', views.painting_assign_worker, name='painting_assign_worker'),
+    path('painting/unassign-worker/', views.painting_unassign_worker, name='painting_unassign_worker'),
+    path('painting/delete-tasks/', views.painting_delete_tasks, name='painting_delete_tasks'),
     path('painting/clear-schedule/', views.painting_clear_schedule, name='painting_clear_schedule'),
+    path('painting/repaint-items/', views.painting_repaint_items, name='painting_repaint_items'),
+    path('orders/<int:order_id>/delete-tasks/', views.delete_all_tasks, name='delete_all_tasks'),
+    path('item/<int:item_id>/delete-paint-tasks/', views.delete_paint_tasks, name='delete_paint_tasks'),
+    path('orders/<int:order_id>/delete-paint-tasks/', views.delete_all_paint_tasks_for_order, name='delete_all_paint_tasks_for_order'),
 
 
     path('customer/shipments/', views.customer_shipments, name='customer_shipments'),

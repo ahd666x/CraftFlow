@@ -34,14 +34,15 @@
             background: #f9f9f9;
         }
         .worker-title {
-            font-size: 18px;
+            font-size: 20px;
             font-weight: bold;
-            background: #007bff;
+            background: #0f172a;
             color: #fff;
-            padding: 8px 15px;
-            border-radius: 5px;
-            display: inline-block;
-            margin-bottom: 10px;
+            padding: 10px 18px;
+            border-radius: 8px;
+            display: block;
+            margin-bottom: 12px;
+            width: fit-content;
         }
         table {
             width: 100%;
@@ -114,14 +115,10 @@
         <table>
             <thead>
                 <tr>
-                    <th>سفارش</th>
+                    <th>#</th>
                     <th>محصول</th>
-                    <th>بخش رنگی</th>
-                    <th>رنگ‌ها</th>
+                    <th>رنگ</th>
                     <th>مرحله</th>
-                    <th>زمان (دقیقه)</th>
-                    <th>خشک‌شدن</th>
-                    <th>وضعیت</th>
                     <th>شروع</th>
                     <th>پایان</th>
                 </tr>
@@ -129,7 +126,7 @@
             <tbody>
                 {% for task in data.tasks %}
                 <tr>
-                    <td>{{ task.order.id }}</td>
+                    <td>{{ task.order_item.id }}</td>
                     <td>
                         {% if task.order_item %}
                             {{ task.order_item.product.name }}
@@ -138,30 +135,15 @@
                         {% endif %}
                     </td>
                     <td>{{ task.color_part|default:"-" }}</td>
-                    <td>
-                        {% if task.order_item %}
-                            {% for color in task.order_item.ordercolor.all %}
-                                <span class="badge bg-info">{{ color.part }}:{{ color.code }}</span>
-                            {% endfor %}
-                        {% endif %}
-                    </td>
                     <td>{{ task.painting_stage.name|default:"-" }}</td>
-                    <td>{{ task.painting_stage.duration_minutes|default:0 }}</td>
-                    <td>{{ task.painting_stage.drying_time_minutes|default:0 }}</td>
-                    <td>
-                        <span class="status-badge status-{{ task.status }}">
-                            {{ task.get_status_display }}
-                        </span>
-                    </td>
                     <td>{{ task.scheduled_start|date:"H:i"|default:"-" }}</td>
                     <td>{{ task.scheduled_end|date:"H:i"|default:"-" }}</td>
                 </tr>
                 {% empty %}
-                <tr><td colspan="8">هیچ تسکی برای این کارگر در این تاریخ وجود ندارد.</td></tr>
+                <tr><td colspan="6">هیچ تسکی برای این کارگر در این تاریخ وجود ندارد.</td></tr>
                 {% endfor %}
             </tbody>
         </table>
-        <div class="total-time">⏱️ مجموع زمان کاری: {{ data.total_duration }} دقیقه</div>
     </div>
     {% empty %}
     <p style="text-align:center;color:#999;">هیچ برنامه‌ریزی برای این تاریخ وجود ندارد.</p>

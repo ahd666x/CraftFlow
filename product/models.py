@@ -200,7 +200,7 @@ class Order(models.Model):
                                 part=dynamic_part,
                                 station_name=station_name.lower(),
                                 step_order=current_step,
-                                quantity=quantity,
+                                quantity=total_qty,
                                 status='pending' if idx == 0 else 'waiting'
                             )
                         )
@@ -215,33 +215,23 @@ class Order(models.Model):
                     if not painting_process:
                         continue
 
-                    stages = painting_process.stages.all().order_by('order')
-                    max_step = ProductionTask.objects.filter(order=self).aggregate(
-                        max_step=models.Max('step_order')
-                    )['max_step'] or 0
-                    base_step = max_step + 1
-
-                    sample_part = item.product.bom.first().part if item.product.bom.exists() else None
-                    if not sample_part:
-                        continue
-
                     total_qty = item.quantity
-                    color_part_name = next((part for part, code in item_colors.items() if code == color_code), f"رنگ {color_code}")
+                    color_part_name = next(
+                        (part for part, code in item_colors.items() if code == color_code),
+                        f"رنگ {color_code}"
+                    )
 
-                    for idx, stage in enumerate(stages, start=1):
-                        tasks_to_create.append(
-                            ProductionTask(
-                                order=self,
-                                part=sample_part,
-                                station_name='paint',
-                                step_order=base_step + idx,
-                                quantity=total_qty,
-                                status='pending' if idx == 1 else 'waiting',
-                                painting_stage=stage,
-                                order_item=item,
-                                color_part=color_part_name,
-                            )
-                        )
+                    base_step = current_step
+                    create_paint_tasks(
+                        tasks_list=tasks_to_create,
+                        order=self,
+                        quantity=total_qty,
+                        process=painting_process,
+                        base_step=base_step,
+                        order_item=item,
+                        color_part=color_part_name,
+                    )
+                    current_step = base_step + painting_process.stages.count()
 
             if tasks_to_create:
                 ProductionTask.objects.bulk_create(tasks_to_create)
@@ -551,7 +541,7 @@ class ProductionTask(models.Model):
     )
 
     order = models.ForeignKey(Order, on_delete=models.CASCADE, related_name='tasks', verbose_name="سفارش")
-    part = models.ForeignKey(Part, on_delete=models.PROTECT, verbose_name="قطعه")
+    part = models.ForeignKey(Part, on_delete=models.PROTECT, verbose_name="قطعه", null=True, blank=True)
     station_name = models.CharField(max_length=50, choices=STATION_CHOICES, verbose_name="ایستگاه کاری")
     step_order = models.PositiveIntegerField(verbose_name="اولویت مرحله")
     quantity = models.PositiveIntegerField(verbose_name="عدد قطعه")
@@ -595,7 +585,8 @@ class ProductionTask(models.Model):
         ordering = ['order', 'part', 'step_order']
 
     def __str__(self):
-        return f"{self.get_station_name_display()} | {self.part} (سفارش {self.order.id})"
+        target = self.part or self.order_item or "—"
+        return f"{self.get_station_name_display()} | {target} (سفارش {self.order.id})"
 
     def save(self, *args, **kwargs):
         old_status = None
@@ -609,11 +600,21 @@ class ProductionTask(models.Model):
         super().save(*args, **kwargs)
 
         if self.status == 'done' and old_status != 'done':
-            next_step = ProductionTask.objects.filter(
-                order=self.order,
-                part=self.part,
-                step_order=self.step_order + 1
-            ).first()
+            if self.station_name == 'paint' and self.order_item_id:
+                next_step = ProductionTask.objects.filter(
+                    order=self.order,
+                    station_name='paint',
+                    order_item=self.order_item,
+                    color_part=self.color_part,
+                    step_order=self.step_order + 1,
+                ).first()
+            else:
+                next_step = ProductionTask.objects.filter(
+                    order=self.order,
+                    part=self.part,
+                    step_order=self.step_order + 1,
+                ).first()
+
             if next_step and next_step.status == 'waiting':
                 next_step.status = 'pending'
                 next_step.save()
@@ -764,7 +765,7 @@ class PaintingStage(models.Model):
         return f"{self.process.name} - مرحله {self.order}: {self.name}"
 
 
-def create_paint_tasks(tasks_list, order, part, quantity, process, base_step, order_item=None, color_part=''):
+def create_paint_tasks(tasks_list, order, quantity, process, base_step, order_item, color_part=''):
     """ایجاد تسک‌های نقاشی برای یک قطعه/آیتم و افزودن به task_list."""
     from .models import ProductionTask
 
@@ -773,7 +774,7 @@ def create_paint_tasks(tasks_list, order, part, quantity, process, base_step, or
         tasks_list.append(
             ProductionTask(
                 order=order,
-                part=part,
+                part=None,
                 station_name='paint',
                 step_order=base_step + idx,
                 quantity=quantity,

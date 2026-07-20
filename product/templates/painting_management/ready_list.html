@@ -1,14 +1,34 @@
 {% extends "painting_management/base.html" %}
 {% block title %}آیتم‌های آماده نقاشی{% endblock %}
 
+{% block extra_css %}
+<style>
+    .ready-row.row-warning { background: #fff8e6; }
+    .status-chip { font-size:0.72rem; padding:0.2rem 0.55rem; border-radius:20px; white-space:nowrap; }
+    .status-chip.ok { background:#d1f5e0; color:#0f7b41; }
+    .status-chip.warn { background:#fdecc8; color:#8a5a00; }
+    .status-chip.has-tasks { background:#e5e9ff; color:#3140b8; }
+    #scheduleBar {
+        position: sticky; bottom: 0; z-index: 20; background: #fff;
+        border-top: 1px solid #e2e8f0; box-shadow: 0 -6px 20px rgba(0,0,0,0.06);
+        padding: 0.9rem 1.2rem; margin: 0 -1rem;
+        display: flex; flex-wrap: wrap; align-items: center; gap: 1rem;
+    }
+    #scheduleBar .summary { font-size:0.85rem; color:#475569; }
+    #scheduleBar .summary b { color:#0f172a; }
+    #warningsBox { font-size:0.78rem; color:#8a5a00; max-width:380px; }
+</style>
+{% endblock %}
+
 {% block painting_content %}
 <div class="d-flex justify-content-between align-items-center mb-3">
     <h2 class="mb-0">🖌️ آیتم‌های آماده نقاشی</h2>
-    <span class="badge bg-success">{{ items|length }} آیتم</span>
+    <span class="badge bg-success">{{ items_with_preview|length }} آیتم</span>
 </div>
 
 <p class="text-muted small mb-3">
-    آیتم‌هایی که لاگ مونتاژ اول (mon) ثبت شده‌اند. برای برنامه‌ریزی، آیتم‌ها را انتخاب کرده و دکمه «افزودن به برنامه» را بزنید.
+    آیتم‌ها را انتخاب کرده و دکمه‌ی <b>«افزودن به برنامه امروز»</b> را بزنید —
+    تشخیص روند رنگ، ایجاد تسک، زمان‌بندی و تخصیص کارگر، همه به‌طور خودکار انجام می‌شود.
 </p>
 
 <div class="schedule-toolbar mb-3">
@@ -26,19 +46,8 @@
                 {% endfor %}
             </select>
         </div>
-        <div class="col-md-2">
-            <button type="submit" class="btn btn-outline-primary w-100">فیلتر</button>
-        </div>
+        <div class="col-md-2"><button type="submit" class="btn btn-outline-primary w-100">فیلتر</button></div>
     </form>
-</div>
-
-<div class="schedule-toolbar mb-3 d-flex flex-wrap gap-2 align-items-center">
-    <label class="small mb-0">تاریخ برنامه:</label>
-    <input type="text" id="scheduleDateInput" class="form-control form-control-sm" style="width:140px" value="{{ schedule_date }}" placeholder="1405-04-28">
-    <button type="button" id="addSelectedToScheduleBtn" class="btn btn-sm btn-primary" disabled>
-        <i class="bi bi-calendar-plus"></i> افزودن انتخاب‌شده‌ها به برنامه
-    </button>
-    <a href="{% url 'painting_schedule' %}" class="btn btn-sm btn-outline-secondary">رفتن به برنامه روزانه</a>
 </div>
 
 <div class="table-responsive">
@@ -46,19 +55,18 @@
         <thead>
             <tr>
                 <th style="width:40px"><input type="checkbox" id="selectAllItems" class="form-check-input"></th>
-                <th>سفارش</th>
-                <th>محصول</th>
-                <th>مشتری</th>
-                <th>رنگ‌ها</th>
-                <th>مونتاژ اول</th>
-                <th>تعداد</th>
-                <th>عملیات</th>
+                <th>سفارش</th><th>محصول</th><th>مشتری</th><th>رنگ‌ها</th>
+                <th>وضعیت نقاشی</th><th>تعداد</th><th>زمان تخمینی</th><th>عملیات</th>
             </tr>
         </thead>
         <tbody>
-            {% for item in items %}
-            <tr>
-                <td><input type="checkbox" class="form-check-input item-checkbox" value="{{ item.id }}"></td>
+            {% for row in items_with_preview %}
+            {% with item=row.item preview=row.preview %}
+            <tr class="ready-row {% if not preview.ok %}row-warning{% endif %}">
+                <td>
+                    <input type="checkbox" class="form-check-input item-checkbox" value="{{ item.id }}"
+                           data-minutes="{{ preview.total_minutes }}" {% if not preview.ok %}disabled{% endif %}>
+                </td>
                 <td><a href="{% url 'order_detail' item.order.id %}">{{ item.order.id }}</a></td>
                 <td>{{ item.product.name }}</td>
                 <td>{{ item.order.customer.name }}</td>
@@ -68,21 +76,42 @@
                     {% endfor %}
                 </td>
                 <td>
-                    {% with mon_log=item.logs.all|first %}
-                        {{ mon_log.created_at|date:"Y/m/d"|default:"-" }}
-                    {% endwith %}
+                    {% if preview.already_has_tasks %}
+                        <span class="status-chip has-tasks">دارای تسک — فقط زمان‌بندی لازم است</span>
+                    {% elif preview.ok %}
+                        <span class="status-chip ok">آماده ({{ preview.processes|length }} روند)</span>
+                    {% elif preview.reason == 'no_color' %}
+                        <span class="status-chip warn">بدون رنگ ثبت‌شده</span>
+                    {% else %}
+                        <span class="status-chip warn">روند نقاشی برای رنگ یافت نشد</span>
+                    {% endif %}
                 </td>
                 <td>{{ item.quantity }}</td>
+                <td>{{ preview.total_minutes|default:"-" }} دقیقه</td>
                 <td>
                     <a href="{% url 'item_detail' item.id %}" class="btn btn-sm btn-outline-primary" title="مشاهده"><i class="bi bi-eye"></i></a>
-                    <a href="{% url 'assign_painting_process' item.id %}" class="btn btn-sm btn-outline-secondary" title="ایجاد تسک نقاشی"><i class="bi bi-palette"></i></a>
                 </td>
             </tr>
+            {% endwith %}
             {% empty %}
-            <tr><td colspan="8" class="text-center py-4 text-muted">هیچ آیتمی برای نقاشی آماده نیست.</td></tr>
+            <tr><td colspan="9" class="text-center py-4 text-muted">هیچ آیتمی برای نقاشی آماده نیست.</td></tr>
             {% endfor %}
         </tbody>
     </table>
+</div>
+
+<div id="scheduleBar">
+    <div class="summary">
+        <span id="selCount">0</span> آیتم انتخاب شده — زمان تخمینی مجموع: <b id="selMinutes">0</b> دقیقه
+    </div>
+    <button type="button" id="addSelectedToScheduleBtn" class="btn btn-sm btn-primary" disabled>
+        <i class="bi bi-calendar-plus"></i> افزودن به برنامه امروز
+    </button>
+    <button type="button" id="deleteSelectedTasksBtn" class="btn btn-sm btn-outline-danger" disabled>
+        <i class="bi bi-trash3"></i> حذف تسک‌های آیتم‌های انتخاب‌شده
+    </button>
+    <a href="{% url 'painting_schedule' %}" class="btn btn-sm btn-outline-secondary">رفتن به برنامه روزانه</a>
+    <div id="warningsBox"></div>
 </div>
 {% endblock %}
 
@@ -91,38 +120,74 @@
 $(function () {
     var csrf = '{{ csrf_token }}';
 
-    $('#selectAllItems').on('change', function () {
-        $('.item-checkbox').prop('checked', $(this).prop('checked'));
-        updateAddBtn();
-    });
-    $('.item-checkbox').on('change', updateAddBtn);
-
-    function updateAddBtn() {
-        var any = $('.item-checkbox:checked').length > 0;
-        $('#addSelectedToScheduleBtn').prop('disabled', !any);
+    function updateSummary() {
+        var checked = $('.item-checkbox:checked');
+        var minutes = 0;
+        checked.each(function () { minutes += parseInt($(this).data('minutes')) || 0; });
+        $('#selCount').text(checked.length);
+        $('#selMinutes').text(minutes);
+        $('#addSelectedToScheduleBtn').prop('disabled', checked.length === 0);
+        $('#deleteSelectedTasksBtn').prop('disabled', checked.length === 0);
     }
+
+    $('#selectAllItems').on('change', function () {
+        $('.item-checkbox:not(:disabled)').prop('checked', $(this).prop('checked'));
+        updateSummary();
+    });
+    $('.item-checkbox').on('change', updateSummary);
 
     $('#addSelectedToScheduleBtn').on('click', function () {
         var itemIds = [];
         $('.item-checkbox:checked').each(function () { itemIds.push($(this).val()); });
-        if (itemIds.length === 0) { alert('هیچ آیتمی انتخاب نشده است'); return; }
-        var date = $('#scheduleDateInput').val();
-        if (!date) { alert('تاریخ برنامه را وارد کنید'); return; }
-        if (!confirm(itemIds.length + ' آیتم به برنامه اضافه شود؟')) return;
+        if (!itemIds.length) return;
+
+        var $btn = $(this);
+        $btn.prop('disabled', true).text('در حال افزودن...');
+        $('#warningsBox').text('');
+
         $.ajax({
             url: '{% url "painting_add_to_schedule" %}',
             method: 'POST',
             headers: {'X-Requested-With': 'XMLHttpRequest'},
-            data: {'csrfmiddlewaretoken': csrf, 'item_ids[]': itemIds, 'date': date},
+            data: {'csrfmiddlewaretoken': csrf, 'item_ids[]': itemIds},
             success: function (data) {
                 if (data.success) {
-                    alert(data.message);
-                    window.location.href = data.redirect || '{% url "painting_schedule" %}?date=' + date;
+                    window.location.href = data.redirect || '{% url "painting_schedule" %}';
                 } else {
-                    alert('خطا: ' + data.error);
+                    $('#warningsBox').text(data.error);
+                    $btn.prop('disabled', false).html('<i class="bi bi-calendar-plus"></i> افزودن به برنامه امروز');
                 }
             },
-            error: function () { alert('خطای ارتباط با سرور'); }
+            error: function () {
+                $('#warningsBox').text('خطای ارتباط با سرور');
+                $btn.prop('disabled', false).html('<i class="bi bi-calendar-plus"></i> افزودن به برنامه امروز');
+            }
+        });
+    });
+
+    $('#deleteSelectedTasksBtn').on('click', function () {
+        var itemIds = [];
+        $('.item-checkbox:checked').each(function () { itemIds.push($(this).val()); });
+        if (!itemIds.length) return;
+        if (!confirm(itemIds.length + ' آیتم انتخاب‌شده — تسک‌های نقاشی آن‌ها (در وضعیت در انتظار) حذف شود؟')) return;
+
+        var $btn = $(this);
+        $btn.prop('disabled', true).text('در حال حذف...');
+        $('#warningsBox').text('');
+
+        $.ajax({
+            url: '{% url "painting_delete_tasks" %}',
+            method: 'POST',
+            headers: {'X-Requested-With': 'XMLHttpRequest'},
+            data: {'csrfmiddlewaretoken': csrf, 'item_ids[]': itemIds},
+            success: function (data) {
+                if (data.success) { alert(data.message); window.location.reload(); }
+                else { $('#warningsBox').text(data.error); $btn.prop('disabled', false).html('<i class="bi bi-trash3"></i> حذف تسک‌های آیتم‌های انتخاب‌شده'); }
+            },
+            error: function () {
+                $('#warningsBox').text('خطای ارتباط با سرور');
+                $btn.prop('disabled', false).html('<i class="bi bi-trash3"></i> حذف تسک‌های آیتم‌های انتخاب‌شده');
+            }
         });
     });
 });

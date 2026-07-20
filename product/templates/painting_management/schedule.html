@@ -1,21 +1,35 @@
 {% extends "painting_management/base.html" %}
 {% load static product_filters %}
-
 {% block title %}برنامه‌ریزی روزانه نقاشی{% endblock %}
+
+{% block extra_css %}
+<style>
+    .kanban-wrap { display:flex; gap:1rem; overflow-x:auto; padding-bottom:1rem; }
+    .kanban-col { min-width:260px; max-width:280px; flex:0 0 auto; background:#f8fafc; border-radius:12px; padding:0.75rem; border:1px solid #e2e8f0; }
+    .kanban-col.drag-over { background:#eaf1ff; border-color:#93b4ff; }
+    .kanban-col-header { display:flex; justify-content:space-between; align-items:center; font-weight:600; font-size:0.85rem; margin-bottom:0.6rem; }
+    .kanban-col.unassigned-col { background:#fff7ed; border-color:#fbd38d; }
+    .kanban-card { background:#fff; border-radius:10px; padding:0.55rem 0.7rem; margin-bottom:0.5rem; box-shadow:0 1px 3px rgba(0,0,0,0.08); cursor:grab; font-size:0.78rem; border-right:3px solid #94a3b8; }
+    .kanban-card.skill-mismatch { border-right-color:#e11d48; }
+    .kanban-card.dragging { opacity:0.4; }
+    .kanban-card .card-title { font-weight:600; font-size:0.8rem; margin-bottom:0.2rem; }
+    .kanban-card .card-meta { color:#64748b; font-size:0.7rem; }
+    .kanban-empty { font-size:0.72rem; color:#94a3b8; text-align:center; padding:0.5rem 0; }
+    .kanban-card { position:relative; }
+    .task-select { position:absolute; top:0.4rem; left:0.5rem; margin:0; z-index:2; }
+    .task-select input { width:1rem; height:1rem; cursor:pointer; }
+    .kanban-card .card-title { padding-left:1.4rem; }
+</style>
+{% endblock %}
 
 {% block painting_content %}
 <div class="d-flex justify-content-between align-items-center mb-3">
     <h2>📅 برنامه‌ریزی روزانه نقاشی</h2>
     <div>
-        <a href="{% url 'daily_schedule_print' %}?date={{ selected_date_str }}" target="_blank" class="btn btn-outline-secondary me-2">
-            <i class="bi bi-printer"></i> چاپ
-        </a>
-        <button id="clearScheduleBtn" class="btn btn-outline-danger me-2">
-            <i class="bi bi-trash"></i> پاک کردن برنامه
-        </button>
-        <button id="autoAssignBtn" class="btn btn-success">
-            <i class="bi bi-lightning-charge"></i> تخصیص خودکار
-        </button>
+        <a href="{% url 'daily_schedule_print' %}?date={{ selected_date_str }}" target="_blank" class="btn btn-outline-secondary me-2"><i class="bi bi-printer"></i> چاپ</a>
+        <button id="deleteTasksBtn" class="btn btn-outline-danger me-2"><i class="bi bi-trash3"></i> حذف انتخاب‌شده‌ها (<span id="selectedCount">0</span>)</button>
+        <button id="clearScheduleBtn" class="btn btn-outline-danger me-2"><i class="bi bi-trash"></i> پاک کردن برنامه</button>
+        <button id="autoAssignBtn" class="btn btn-success"><i class="bi bi-lightning-charge"></i> تخصیص خودکار باقیمانده</button>
     </div>
 </div>
 
@@ -23,121 +37,61 @@
     <a href="?date={{ yesterday }}" class="btn btn-sm btn-outline-secondary">روز قبل</a>
     <span class="fs-5">{{ selected_date|date:'Y/m/d' }}</span>
     <a href="?date={{ tomorrow }}" class="btn btn-sm btn-outline-secondary">روز بعد</a>
-    <a href="{% url 'painting_ready_list' %}" class="btn btn-sm btn-outline-info me-auto">
-        <i class="bi bi-list-check"></i> لیست کامل آماده‌ها
+    {% if stats.ready_unscheduled %}
+    <a href="{% url 'painting_ready_list' %}" class="btn btn-sm btn-outline-warning me-auto">
+        <i class="bi bi-exclamation-circle"></i> {{ stats.ready_unscheduled }} آیتم آماده هنوز زمان‌بندی نشده
     </a>
+    {% endif %}
 </div>
 
 <div class="row g-3 mb-4">
-    <div class="col-md-3">
-        <div class="card bg-primary text-white"><div class="card-body">
-            <h6>کل تسک‌ها</h6><p class="display-6">{{ stats.total_tasks }}</p>
-        </div></div>
-    </div>
-    <div class="col-md-3">
-        <div class="card bg-success text-white"><div class="card-body">
-            <h6>تخصیص‌یافته</h6><p class="display-6">{{ stats.assigned_tasks }}</p>
-        </div></div>
-    </div>
-    <div class="col-md-3">
-        <div class="card bg-warning text-white"><div class="card-body">
-            <h6>بدون تخصیص</h6><p class="display-6">{{ stats.unassigned_tasks }}</p>
-        </div></div>
-    </div>
-    <div class="col-md-3">
-        <div class="card bg-info text-white"><div class="card-body">
-            <h6>مجموع زمان (دقیقه)</h6><p class="display-6">{{ stats.total_duration }}</p>
-        </div></div>
-    </div>
+    <div class="col-md-3"><div class="card bg-primary text-white"><div class="card-body"><h6>کل تسک‌ها</h6><p class="display-6">{{ stats.total_tasks }}</p></div></div></div>
+    <div class="col-md-3"><div class="card bg-success text-white"><div class="card-body"><h6>تخصیص‌یافته</h6><p class="display-6">{{ stats.assigned_tasks }}</p></div></div></div>
+    <div class="col-md-3"><div class="card bg-warning text-white"><div class="card-body"><h6>بدون تخصیص</h6><p class="display-6">{{ stats.unassigned_tasks }}</p></div></div></div>
+    <div class="col-md-3"><div class="card bg-info text-white"><div class="card-body"><h6>مجموع زمان (دقیقه)</h6><p class="display-6">{{ stats.total_duration }}</p></div></div></div>
 </div>
 
-{% for worker_name, tasks in grouped_tasks.items %}
-<div class="card mb-3">
-    <div class="card-header d-flex justify-content-between">
-        <span>👤 {{ worker_name }}</span>
-        <span class="badge bg-secondary">{{ tasks|length }} تسک</span>
-    </div>
-    <div class="card-body p-0">
-        <div class="table-responsive">
-            <table class="table table-sm mb-0">
-                <thead>
-                    <tr>
-                        <th>#</th>
-                        <th>محصول</th>
-                        <th>رنگ</th>
-                        <th>مرحله</th>
-                        <th>شروع</th>
-                        <th>پایان</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {% for task in tasks %}
-                    <tr>
-                        <td>{{ task.order_item.id }}</td>
-                        <td>{{ task.order_item.product.name }} <small class="text-muted">({{ task.order_item.product.category.name }})</small></td>
-                        <td>{{ task.color_part|default:"-" }}</td>
-                        <td>{{ task.painting_stage.name|default:"-" }}</td>
-                        <td>{{ task.scheduled_start|date:"H:i"|default:"-" }}</td>
-                        <td>{{ task.scheduled_end|date:"H:i"|default:"-" }}</td>
-                    </tr>
-                    {% endfor %}
-                </tbody>
-            </table>
-        </div>
-    </div>
-</div>
-{% endfor %}
+<p class="text-muted small">کارت‌ها را بین ستون‌ها بکشید تا کارگر تسک تغییر کند.</p>
 
-{% if unassigned_tasks %}
-<div class="card mt-4">
-    <div class="card-header">تسک‌های بدون تخصیص</div>
-    <div class="card-body p-0">
-        <div class="table-responsive">
-            <table class="table table-sm mb-0">
-                <thead>
-                    <tr>
-                        <th>#</th>
-                        <th>محصول</th>
-                        <th>رنگ</th>
-                        <th>مرحله</th>
-                        <th>مهارت</th>
-                        <th>عملیات</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {% for task in unassigned_tasks %}
-                    <tr>
-                        <td>{{ task.order_item.id }}</td>
-                        <td>{{ task.order_item.product.name }} <small class="text-muted">({{ task.order_item.product.category.name }})</small></td>
-                        <td>{{ task.color_part|default:"-" }}</td>
-                        <td>{{ task.painting_stage.name|default:"-" }}</td>
-                        <td>
-                            {% if task.painting_stage %}
-                                <span class="badge bg-info">{{ task.painting_stage.get_required_skill_display }}</span>
-                            {% else %}-{% endif %}
-                        </td>
-                        <td>
-                            {% if task.painting_stage %}
-                                {% with task_workers=workers_by_skill|get_item:task.painting_stage.required_skill %}
-                                <select class="form-select form-select-sm worker-select" data-task-id="{{ task.id }}" data-skill="{{ task.painting_stage.required_skill }}">
-                                    <option value="">انتخاب کارگر...</option>
-                                    {% for w in task_workers %}
-                                        <option value="{{ w.user.id }}">{{ w.user.get_full_name|default:w.user.username }}</option>
-                                    {% endfor %}
-                                </select>
-                                {% endwith %}
-                            {% endif %}
-                        </td>
-                    </tr>
-                    {% empty %}
-                    <tr><td colspan="6" class="text-center">تسک بدون تخصیصی وجود ندارد.</td></tr>
-                    {% endfor %}
-                </tbody>
-            </table>
+<div class="kanban-wrap">
+    <div class="kanban-col unassigned-col" data-worker-id="">
+        <div class="kanban-col-header"><span>⏳ بدون تخصیص</span><span class="badge bg-secondary">{{ unassigned_tasks|length }}</span></div>
+        <div class="kanban-cards" data-worker-id="">
+            {% for task in unassigned_tasks %}
+            <div class="kanban-card" draggable="true" data-task-id="{{ task.id }}">
+                <label class="task-select"><input type="checkbox" class="task-check" value="{{ task.id }}"></label>
+                <div class="card-title">{{ task.order_item.product.name }}</div>
+                <div class="card-meta">
+                    سفارش {{ task.order_item.order.id }} · {{ task.color_part|default:"-" }}<br>
+                    {{ task.painting_stage.name|default:"-" }}
+                    {% if task.painting_stage %}({{ task.painting_stage.duration_minutes }} دقیقه){% endif %}
+                </div>
+            </div>
+            {% empty %}<div class="kanban-empty">چیزی نیست</div>{% endfor %}
         </div>
     </div>
+
+    {% for col in worker_columns %}
+    <div class="kanban-col" data-worker-id="{{ col.worker_id }}">
+        <div class="kanban-col-header"><span>👤 {{ col.label }}</span><span class="badge bg-secondary">{{ col.tasks|length }}</span></div>
+        <div class="small text-muted mb-2">مهارت‌ها: {{ col.skills|join:", "|default:"-" }}</div>
+        <div class="kanban-cards" data-worker-id="{{ col.worker_id }}">
+            {% for task in col.tasks %}
+            <div class="kanban-card {% if task.painting_stage and task.painting_stage.required_skill not in col.skills %}skill-mismatch{% endif %}"
+                 draggable="true" data-task-id="{{ task.id }}">
+                <label class="task-select"><input type="checkbox" class="task-check" value="{{ task.id }}"></label>
+                <div class="card-title">{{ task.order_item.product.name }}</div>
+                <div class="card-meta">
+                    سفارش {{ task.order_item.order.id }} · {{ task.color_part|default:"-" }}<br>
+                    {{ task.painting_stage.name|default:"-" }}
+                    {% if task.painting_stage %}({{ task.painting_stage.duration_minutes }} دقیقه){% endif %}
+                </div>
+            </div>
+            {% empty %}<div class="kanban-empty">تسکی ندارد</div>{% endfor %}
+        </div>
+    </div>
+    {% endfor %}
 </div>
-{% endif %}
 {% endblock %}
 
 {% block painting_js %}
@@ -145,57 +99,83 @@
 $(function () {
     var csrf = '{{ csrf_token }}';
     var currentDate = '{{ selected_date_str }}';
+    var dragged = null;
 
-    $('#autoAssignBtn').on('click', function () {
-        if (!confirm('آیا از اجرای تخصیص خودکار اطمینان دارید؟')) return;
+    function updateSelectedCount() {
+        $('#selectedCount').text($('.task-check:checked').length);
+    }
+    $(document).on('change', '.task-check', updateSelectedCount);
+
+    $('#deleteTasksBtn').on('click', function () {
+        var ids = $('.task-check:checked').map(function () { return this.value; }).get();
+        if (!ids.length) { alert('هیچ تسکی انتخاب نشده است.'); return; }
+        if (!confirm(ids.length + ' تسک انتخاب‌شده حذف شود؟ (تسک‌های تکمیل‌شده حذف نمی‌شوند)')) return;
         $.ajax({
-            url: '{% url "painting_auto_assign" %}',
-            method: 'POST',
+            url: '{% url "painting_delete_tasks" %}', method: 'POST',
             headers: {'X-Requested-With': 'XMLHttpRequest'},
-            data: {'csrfmiddlewaretoken': csrf, 'date': currentDate},
+            data: {csrfmiddlewaretoken: csrf, 'task_ids[]': ids},
             success: function (data) {
                 if (data.success) { alert(data.message); location.reload(); }
-                else { alert('خطا: ' + data.error); }
+                else alert('خطا: ' + data.error);
             },
             error: function () { alert('خطای ارتباط با سرور'); }
         });
     });
 
-    $('.worker-select').on('change', function () {
-        var taskId = $(this).data('task-id');
-        var workerId = $(this).val();
-        if (!workerId) return;
-        var workerName = $(this).find('option:selected').text();
-        if (!confirm('تخصیص "' + workerName + '" به این تسک؟')) { $(this).val(''); return; }
+    document.querySelectorAll('.kanban-card').forEach(function (card) {
+        card.addEventListener('dragstart', function () { dragged = card; card.classList.add('dragging'); });
+        card.addEventListener('dragend', function () { card.classList.remove('dragging'); dragged = null; });
+    });
+
+    document.querySelectorAll('.kanban-col').forEach(function (col) {
+        col.addEventListener('dragover', function (e) { e.preventDefault(); col.classList.add('drag-over'); });
+        col.addEventListener('dragleave', function () { col.classList.remove('drag-over'); });
+        col.addEventListener('drop', function (e) {
+            e.preventDefault();
+            col.classList.remove('drag-over');
+            if (!dragged) return;
+
+            var taskId = dragged.dataset.taskId;
+            var workerId = col.dataset.workerId;
+            var container = col.querySelector('.kanban-cards');
+            var empty = container.querySelector('.kanban-empty');
+            if (empty) empty.remove();
+            container.appendChild(dragged);
+            updateCounts();
+
+            var url = workerId ? '{% url "painting_assign_worker" %}' : '{% url "painting_unassign_worker" %}';
+            var data = {csrfmiddlewaretoken: csrf, task_id: taskId};
+            if (workerId) data.worker_id = workerId;
+
+            $.ajax({
+                url: url, method: 'POST', headers: {'X-Requested-With': 'XMLHttpRequest'}, data: data,
+                error: function () { alert('خطا در تخصیص — صفحه را رفرش کنید'); }
+            });
+        });
+    });
+
+    function updateCounts() {
+        document.querySelectorAll('.kanban-col').forEach(function (col) {
+            col.querySelector('.badge').textContent = col.querySelectorAll('.kanban-card').length;
+        });
+    }
+
+    $('#autoAssignBtn').on('click', function () {
+        if (!confirm('کارگران به تسک‌های بدون‌تخصیص، بر اساس مهارت و بار کاری، تخصیص داده می‌شوند. ادامه می‌دهید؟')) return;
         $.ajax({
-            url: '{% url "painting_assign_worker" %}',
-            method: 'POST',
-            headers: {'X-Requested-With': 'XMLHttpRequest'},
-            data: {'csrfmiddlewaretoken': csrf, 'task_id': taskId, 'worker_id': workerId},
-            success: function (data) {
-                if (data.success) { location.reload(); }
-                else { alert('خطا: ' + (data.error || 'نامشخص')); }
-            },
+            url: '{% url "painting_auto_assign" %}', method: 'POST',
+            headers: {'X-Requested-With': 'XMLHttpRequest'}, data: {csrfmiddlewaretoken: csrf, date: currentDate},
+            success: function (data) { if (data.success) location.reload(); else alert('خطا: ' + data.error); },
             error: function () { alert('خطای ارتباط با سرور'); }
         });
     });
 
     $('#clearScheduleBtn').on('click', function () {
-        if (!confirm('آیا از پاک کردن تمام برنامه‌ریزی‌های این تاریخ اطمینان دارید؟ این عمل قابل بازگشت نیست.')) return;
-        var date = '{{ selected_date_str }}';
+        if (!confirm('آیا از پاک کردن تمام برنامه‌ریزی‌های این تاریخ اطمینان دارید؟')) return;
         $.ajax({
-            url: '{% url "painting_clear_schedule" %}',
-            method: 'POST',
-            headers: {'X-Requested-With': 'XMLHttpRequest'},
-            data: {'csrfmiddlewaretoken': '{{ csrf_token }}', 'date': date},
-            success: function (data) {
-                if (data.success) {
-                    alert(data.message);
-                    location.reload();
-                } else {
-                    alert('خطا: ' + data.error);
-                }
-            },
+            url: '{% url "painting_clear_schedule" %}', method: 'POST',
+            headers: {'X-Requested-With': 'XMLHttpRequest'}, data: {csrfmiddlewaretoken: csrf, date: currentDate},
+            success: function (data) { if (data.success) { alert(data.message); location.reload(); } else alert('خطا: ' + data.error); },
             error: function () { alert('خطای ارتباط با سرور'); }
         });
     });
