@@ -2933,7 +2933,7 @@ def customer_shipment_detail(request, plate, date):
 @login_required
 @admin_or_manager_required
 def assign_painting_process(request, item_id):
-    from .utils import get_unique_color_codes_for_item, get_painting_process_for_color
+    from .utils import get_item_color_assignments, get_painting_process_for_color
     from .models import PaintingProcess, ProductionTask, create_paint_tasks
 
     item = get_object_or_404(OrderItem, pk=item_id)
@@ -2962,32 +2962,25 @@ def assign_painting_process(request, item_id):
             new_tasks = []
             errors = []
 
-            color_codes = get_unique_color_codes_for_item(item)
-            item_colors = {c.part: c.code for c in item.ordercolor.all()}
+            assignments = get_item_color_assignments(item)
 
-            if not color_codes:
+            if not assignments:
                 errors.append("⚠️ هیچ کد رنگی برای این آیتم یافت نشد.")
 
-            for color_code in color_codes:
+            for part_name, color_code in assignments:
                 painting_process = get_painting_process_for_color(color_code)
                 if not painting_process:
-                    errors.append(f"❌ کد رنگ {color_code}: روند نقاشی فعالی یافت نشد.")
+                    errors.append(f"❌ {part_name} (کد رنگ {color_code}): روند نقاشی فعالی یافت نشد.")
                     continue
-
-                total_qty = item.quantity
-                color_part_name = next(
-                    (part for part, code in item_colors.items() if code == color_code),
-                    f"رنگ {color_code}"
-                )
 
                 create_paint_tasks(
                     tasks_list=new_tasks,
                     order=item.order,
-                    quantity=total_qty,
+                    quantity=item.quantity,
                     process=painting_process,
                     base_step=global_base,
                     order_item=item,
-                    color_part=color_part_name
+                    color_part=part_name
                 )
                 global_base += painting_process.stages.count()
 
@@ -3399,6 +3392,7 @@ def painting_schedule_view(request):
         ProductionTask.objects.filter(
             station_name='paint',
             scheduled_start__date=gregorian_date,
+            part__isnull=True,
         ).select_related(
             'order_item__order', 'order_item__product', 'order_item__product__category',
             'painting_stage', 'assigned_worker',
@@ -3477,7 +3471,7 @@ def painting_ready_list(request):
 def painting_add_to_schedule(request):
     """افزودن خودکار آیتم‌های انتخاب‌شده به برنامه امروز + تخصیص خودکار کارگر"""
     import jdatetime
-    from .utils import create_and_schedule_items_for_date, auto_assign_paint_tasks
+    from .utils import create_and_schedule_items_for_date, auto_assign_paint_tasks, parse_jalali_date
 
     if request.method != 'POST' or request.headers.get('X-Requested-With') != 'XMLHttpRequest':
         return JsonResponse({'success': False, 'error': 'درخواست نامعتبر'})
@@ -3510,7 +3504,7 @@ def painting_add_to_schedule(request):
         return JsonResponse({'success': False, 'error': error_msg})
 
     if scheduled_count > 0:
-        auto_assign_paint_tasks(target_date=target_date)
+        auto_assign_paint_tasks(target_date=scheduled_date)
 
     message_parts = []
     if created_count:
@@ -3536,7 +3530,7 @@ def painting_add_to_schedule(request):
 @admin_or_manager_required
 def painting_assign_process(request):
     """تخصیص خودکار روند نقاشی به یک آیتم سفارش بر اساس کدهای رنگی (AJAX)"""
-    from .utils import get_unique_color_codes_for_item, get_painting_process_for_color
+    from .utils import get_item_color_assignments, get_painting_process_for_color
 
     if request.method == 'POST' and request.headers.get('X-Requested-With') == 'XMLHttpRequest':
         item_id = request.POST.get('item_id')
@@ -3557,23 +3551,17 @@ def painting_assign_process(request):
                     max_step=models.Max('step_order')
                 )['max_step'] or 0
 
-                color_codes = get_unique_color_codes_for_item(item)
-                item_colors = {c.part: c.code for c in item.ordercolor.all()}
+                assignments = get_item_color_assignments(item)
                 new_tasks = []
 
-                for color_code in color_codes:
+                for part_name, color_code in assignments:
                     painting_process = get_painting_process_for_color(color_code)
                     if not painting_process:
                         continue
 
-                    color_part_name = next(
-                        (part for part, code in item_colors.items() if code == color_code),
-                        f"رنگ {color_code}"
-                    )
-
                     create_paint_tasks(
                         new_tasks, item.order, item.quantity,
-                        painting_process, global_base, order_item=item, color_part=color_part_name
+                        painting_process, global_base, order_item=item, color_part=part_name
                     )
                     global_base += painting_process.stages.count()
 
@@ -3636,8 +3624,10 @@ def painting_get_available_workers(request):
 @login_required
 @admin_or_manager_required
 def painting_assign_worker(request):
-    """تخصیص دستی یک کارگر به یک تسک نقاشی (AJAX)"""
+    """تخصیص دستی یک کارگر به یک تسک نقاشی (AJAX) — با محاسبه‌ی مجدد زمان"""
+    from datetime import timedelta
     from .models import ProductionTask
+    from .utils import _worker_day_bounds, _next_slot_for_worker
     from django.contrib.auth.models import User
 
     if request.method == 'POST' and request.headers.get('X-Requested-With') == 'XMLHttpRequest':
@@ -3646,11 +3636,31 @@ def painting_assign_worker(request):
         if not task_id or not worker_id:
             return JsonResponse({'success': False, 'error': 'اطلاعات ناقص'})
 
-        task = get_object_or_404(ProductionTask, pk=task_id, station_name='paint')
+        task = get_object_or_404(
+            ProductionTask.objects.select_related('painting_stage'),
+            pk=task_id, station_name='paint'
+        )
         worker_user = get_object_or_404(User, pk=worker_id)
-        task.assigned_worker = worker_user
-        task.save()
-        return JsonResponse({'success': True})
+
+        # روزی که تسک قبلاً در آن بود (یا اگر زمان نداشت، امروز)
+        ref_date = (task.scheduled_start.date() if task.scheduled_start
+                    else timezone.localdate())
+        bounds = _worker_day_bounds(ref_date)
+
+        with transaction.atomic():
+            task.assigned_worker = worker_user
+            slot = _next_slot_for_worker(worker_user.id, ref_date, bounds, {})
+            if slot is not None:
+                duration = task.painting_stage.duration_minutes if task.painting_stage else 60
+                task.scheduled_start = slot
+                task.scheduled_end = slot + timedelta(minutes=duration)
+            task.save()
+
+        return JsonResponse({
+            'success': True,
+            'scheduled_start': task.scheduled_start.strftime('%H:%M') if task.scheduled_start else None,
+            'scheduled_end': task.scheduled_end.strftime('%H:%M') if task.scheduled_end else None,
+        })
 
     return JsonResponse({'success': False, 'error': 'درخواست نامعتبر'})
 
@@ -3667,6 +3677,8 @@ def painting_unassign_worker(request):
             return JsonResponse({'success': False, 'error': 'اطلاعات ناقص'})
         task = get_object_or_404(ProductionTask, pk=task_id, station_name='paint')
         task.assigned_worker = None
+        task.scheduled_start = None
+        task.scheduled_end = None
         task.save()
         return JsonResponse({'success': True})
 

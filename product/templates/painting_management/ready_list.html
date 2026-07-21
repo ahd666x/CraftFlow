@@ -149,11 +149,15 @@ $(function () {
             url: '{% url "painting_add_to_schedule" %}',
             method: 'POST',
             headers: {'X-Requested-With': 'XMLHttpRequest'},
-            data: {'csrfmiddlewaretoken': csrf, 'item_ids[]': itemIds},
-            success: function (data) {
-                if (data.success) {
-                    window.location.href = data.redirect || '{% url "painting_schedule" %}';
-                } else {
+        data: {
+            'csrfmiddlewaretoken': csrf,
+            'item_ids[]': itemIds,
+            'date': '{{ schedule_date }}'   // ← همیشه امروز را صریح می‌فرستد
+        },
+        success: function (data) {
+            if (data.success) {
+                window.location.href = data.redirect || '{% url "painting_schedule" %}';
+            } else {
                     $('#warningsBox').text(data.error);
                     $btn.prop('disabled', false).html('<i class="bi bi-calendar-plus"></i> افزودن به برنامه امروز');
                 }

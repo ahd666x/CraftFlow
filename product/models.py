@@ -122,7 +122,7 @@ class Order(models.Model):
             apply_size_adjustment,
             update_barcode_size,
             get_painting_process_for_color,
-            get_unique_color_codes_for_item,
+            get_item_color_assignments,
         )
         from .models import ProductionTask
 
@@ -205,31 +205,22 @@ class Order(models.Model):
                             )
                         )
 
-            # Phase 2: paint tasks per unique color code per OrderItem
+            # Phase 2: paint tasks — یک زنجیره‌ی نقاشی مستقل برای هر (بخش, کد رنگ)
             for item in self.items.all():
-                color_codes = get_unique_color_codes_for_item(item)
-                item_colors = {c.part: c.code for c in item.ordercolor.all()}
-
-                for color_code in color_codes:
+                for part_name, color_code in get_item_color_assignments(item):
                     painting_process = get_painting_process_for_color(color_code)
                     if not painting_process:
                         continue
-
-                    total_qty = item.quantity
-                    color_part_name = next(
-                        (part for part, code in item_colors.items() if code == color_code),
-                        f"رنگ {color_code}"
-                    )
 
                     base_step = current_step
                     create_paint_tasks(
                         tasks_list=tasks_to_create,
                         order=self,
-                        quantity=total_qty,
+                        quantity=item.quantity,
                         process=painting_process,
                         base_step=base_step,
                         order_item=item,
-                        color_part=color_part_name,
+                        color_part=part_name,
                     )
                     current_step = base_step + painting_process.stages.count()
 
