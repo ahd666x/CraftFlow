@@ -103,6 +103,12 @@
                                 <a href="{% url 'order_invoice' order.id %}" class="btn btn-outline-info" target="_blank" title="پیش‌فاکتور">
                                     <i class="bi bi-receipt"></i>
                                 </a>
+                                <!-- در حلقه orders در order_list.html -->
+
+                                <a href="{% url 'admin_edit_order' order.id %}" class="btn btn-outline-primary" title="ویرایش سفارش">
+                                    <i class="bi bi-pencil"></i>
+                                </a>
+
                             </div>
                         </td>
                     </tr>

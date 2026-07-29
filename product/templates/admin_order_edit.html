@@ -1,0 +1,296 @@
+<!-- templates/admin_order_edit.html -->
+{% extends 'base.html' %}
+{% load static %}
+{% load product_filters %}
+
+{% block title %}ویرایش سفارش #{{ order.id }}{% endblock %}
+
+{% block extra_css %}
+<style>
+    .form-section {
+        background: #f8f9fa;
+        border-radius: 12px;
+        padding: 1.5rem;
+        margin-bottom: 2rem;
+    }
+    .item-actions .btn {
+        margin: 0 2px;
+    }
+    .color-badge {
+        display: inline-block;
+        background: #e9ecef;
+        padding: 0.2rem 0.7rem;
+        border-radius: 20px;
+        font-size: 0.85rem;
+        margin: 2px;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4">
+    <!-- هدر -->
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h2><i class="bi bi-pencil-square text-primary"></i> ویرایش سفارش #{{ order.id }}</h2>
+        <div>
+            <a href="{% url 'order_detail' order.id %}" class="btn btn-outline-secondary me-2">
+                <i class="bi bi-eye"></i> مشاهده
+            </a>
+            <a href="{% url 'order_list' %}" class="btn btn-secondary">
+                <i class="bi bi-arrow-right"></i> بازگشت
+            </a>
+        </div>
+    </div>
+
+    <!-- ============================================================ -->
+    <!-- ۱. فرم اطلاعات اصلی سفارش -->
+    <!-- ============================================================ -->
+    <div class="card shadow-sm mb-4">
+        <div class="card-header bg-primary text-white">
+            <h5 class="mb-0"><i class="bi bi-info-circle me-2"></i>اطلاعات اصلی سفارش</h5>
+        </div>
+        <div class="card-body">
+            <form method="post" id="order-edit-form">
+                {% csrf_token %}
+                <div class="row g-3">
+                    <div class="col-md-4">
+                        {{ form.customer.label_tag }}
+                        {{ form.customer }}
+                    </div>
+                    <div class="col-md-2">
+                        {{ form.number.label_tag }}
+                        {{ form.number }}
+                    </div>
+                    <div class="col-md-2">
+                        {{ form.due_date.label_tag }}
+                        {{ form.due_date }}
+                    </div>
+                    <div class="col-md-2">
+                        {{ form.priority.label_tag }}
+                        {{ form.priority }}
+                    </div>
+                    <div class="col-md-2">
+                        {{ form.status.label_tag }}
+                        {{ form.status }}
+                    </div>
+                </div>
+                <div class="mt-3 text-end">
+                    <button type="submit" class="btn btn-success">
+                        <i class="bi bi-save me-1"></i> ذخیره تغییرات
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- ============================================================ -->
+    <!-- ۲. مدیریت آیتم‌ها -->
+    <!-- ============================================================ -->
+    <div class="card shadow-sm mb-4">
+        <div class="card-header bg-dark text-white d-flex justify-content-between align-items-center">
+            <h5 class="mb-0"><i class="bi bi-list-ul me-2"></i>آیتم‌های سفارش</h5>
+            <span class="badge bg-light text-dark">{{ items|length }} آیتم</span>
+        </div>
+        <div class="card-body p-0">
+            <div class="table-responsive">
+                <table class="table table-hover align-middle mb-0">
+                    <thead class="table-light">
+                        <tr>
+                            <th>#</th>
+                            <th>دسته</th>
+                            <th>محصول</th>
+                            <th>تعداد</th>
+                            <th>اندازه</th>
+                            <th>رنگ‌ها</th>
+                            <th>توضیحات</th>
+                            <th>عملیات</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for item in items %}
+                        <tr>
+                            <td>{{ forloop.counter }}</td>
+                            <td>{{ item.product.category.name }}</td>
+                            <td>{{ item.product.name }}</td>
+                            <td><span class="badge bg-secondary">{{ item.quantity }}</span></td>
+                            <td>{{ item.size|default:"-" }}</td>
+                            <td>
+                                {% for color in item.ordercolor.all %}
+                                    <span class="color-badge">{{ color.part }}: {{ color.code }}</span>
+                                {% empty %}
+                                    <span class="text-muted">بدون رنگ</span>
+                                {% endfor %}
+                            </td>
+                            <td>{{ item.notes|default:"-" }}</td>
+                            <td>
+                                <div class="d-flex gap-1">
+                                    <!-- دکمه ویرایش آیتم (لینک به یک صفحه ویرایش اختصاصی) -->
+                                    <a href="{% url 'admin_edit_order_item' item.id %}" class="btn btn-sm btn-outline-primary" title="ویرایش آیتم">
+                                        <i class="bi bi-pencil"></i>
+                                    </a>
+                                    <!-- حذف آیتم -->
+                                    <form method="post" action="{% url 'admin_delete_order_item' item.id %}" onsubmit="return confirm('آیا از حذف این آیتم اطمینان دارید؟')" style="display:inline;">
+                                        {% csrf_token %}
+                                        <button type="submit" class="btn btn-sm btn-outline-danger" title="حذف آیتم">
+                                            <i class="bi bi-trash"></i>
+                                        </button>
+                                    </form>
+                                    <!-- چاپ فرم تولید -->
+                                    <a href="{% url 'print_sheet' item.id %}" class="btn btn-sm btn-outline-secondary" target="_blank" title="فرم تولید">
+                                        <i class="bi bi-file-earmark-text"></i>
+                                    </a>
+                                </div>
+                            </td>
+                        </tr>
+                        {% empty %}
+                        <tr>
+                            <td colspan="8" class="text-center py-4 text-muted">
+                                <i class="bi bi-inbox fs-2 d-block mb-2"></i>
+                                هیچ آیتمی در این سفارش وجود ندارد.
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- ============================================================ -->
+    <!-- ۳. افزودن آیتم جدید (همانند create_step2) -->
+    <!-- ============================================================ -->
+    <div class="card shadow-sm mb-4">
+        <div class="card-header bg-success text-white">
+            <h5 class="mb-0"><i class="bi bi-plus-circle me-2"></i>افزودن آیتم جدید</h5>
+        </div>
+        <div class="card-body">
+            <form method="post" action="{% url 'admin_add_order_item' order.id %}" id="add-item-form">
+                {% csrf_token %}
+                <div class="row g-3">
+                    <div class="col-md-3">
+                        {{ item_form.category.label_tag }}
+                        {{ item_form.category }}
+                    </div>
+                    <div class="col-md-3">
+                        {{ item_form.product.label_tag }}
+                        {{ item_form.product }}
+                    </div>
+                    <div class="col-md-2">
+                        {{ item_form.quantity.label_tag }}
+                        {{ item_form.quantity }}
+                    </div>
+                    <div class="col-md-2">
+                        {{ item_form.size.label_tag }}
+                        {{ item_form.size }}
+                    </div>
+                    <div class="col-md-2">
+                        {{ item_form.notes.label_tag }}
+                        {{ item_form.notes }}
+                    </div>
+                </div>
+                <h6 class="mt-3">رنگ‌ها</h6>
+                <div class="row g-3">
+                    {% for field in color_form %}
+                        <div class="col-md-2">
+                            {{ field.label_tag }}
+                            {{ field }}
+                        </div>
+                    {% endfor %}
+                </div>
+                <div class="mt-3 text-end">
+                    <button type="submit" class="btn btn-success">
+                        <i class="bi bi-plus-circle me-1"></i> افزودن آیتم
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- ============================================================ -->
+    <!-- ۴. عملیات خطرناک (حذف سفارش، حذف تسک‌ها) -->
+    <!-- ============================================================ -->
+    <div class="card shadow-sm border-danger mb-4">
+        <div class="card-header bg-danger text-white">
+            <h5 class="mb-0"><i class="bi bi-exclamation-triangle me-2"></i>عملیات مدیریتی</h5>
+        </div>
+        <div class="card-body">
+            <div class="d-flex flex-wrap gap-3">
+                <!-- حذف همه تسک‌ها و برگشت به پیش‌نویس -->
+                {% if has_any_tasks %}
+                <form method="post" action="{% url 'delete_all_tasks' order.id %}" onsubmit="return confirm('آیا از حذف تمام تسک‌های این سفارش اطمینان دارید؟')">
+                    {% csrf_token %}
+                    <button type="submit" class="btn btn-outline-danger">
+                        <i class="bi bi-arrow-counterclockwise me-1"></i> بازنشانی تسک‌ها (برگشت به پیش‌نویس)
+                    </button>
+                </form>
+                {% endif %}
+
+                <!-- حذف تسک‌های نقاشی -->
+                {% if has_paint_tasks %}
+                <form method="post" action="{% url 'delete_all_paint_tasks_for_order' order.id %}" onsubmit="return confirm('آیا از حذف تسک‌های نقاشی این سفارش اطمینان دارید؟')">
+                    {% csrf_token %}
+                    <button type="submit" class="btn btn-outline-warning">
+                        <i class="bi bi-brush me-1"></i> حذف تسک‌های نقاشی
+                    </button>
+                </form>
+                {% endif %}
+
+                <!-- حذف کامل سفارش -->
+                <form method="post" action="{% url 'admin_delete_order' order.id %}" onsubmit="return confirm('⚠️ هشدار: این عمل غیرقابل بازگشت است. آیا از حذف کامل سفارش #{{ order.id }} اطمینان دارید؟')">
+                    {% csrf_token %}
+                    <button type="submit" class="btn btn-danger">
+                        <i class="bi bi-trash me-1"></i> حذف کامل سفارش
+                    </button>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- اسکریپت‌های AJAX برای بارگذاری محصولات و رنگ‌ها (همانند create_step2) -->
+<script>
+$(document).ready(function() {
+    // بارگذاری محصولات بر اساس دسته
+    $('#id_category').change(function() {
+        var categoryId = $(this).val();
+        if (categoryId) {
+            $.ajax({
+                url: "{% url 'ajax_load_products' %}",
+                data: { 'category': categoryId },
+                success: function(data) {
+                    var $productSelect = $('#id_product');
+                    $productSelect.empty();
+                    $productSelect.append($('<option>', { value: '', text: '---------' }));
+                    $.each(data, function(i, product) {
+                        $productSelect.append($('<option>', { value: product.id, text: product.name }));
+                    });
+                }
+            });
+        } else {
+            $('#id_product').empty().append($('<option>', { value: '', text: '---------' }));
+        }
+    });
+
+    // بارگذاری رنگ‌های پیش‌فرض محصول
+    $('#id_product').on('change', function() {
+        var productId = $(this).val();
+        if (productId) {
+            fetch(`/ajax/load-product-colors/${productId}/`)
+                .then(response => response.json())
+                .then(data => {
+                    $('.color-field select').val(''); // ریست
+                    Object.keys(data.defaults).forEach(part => {
+                        $(`.color-field[data-part="${part}"] select`).val(data.defaults[part]);
+                    });
+                });
+        }
+    });
+
+    // فعال‌سازی انتخاب اولیه اگر دسته‌ای انتخاب شده باشد
+    var initialCategory = $('#id_category').val();
+    if (initialCategory) {
+        $('#id_category').trigger('change');
+    }
+});
+</script>
+{% endblock %}

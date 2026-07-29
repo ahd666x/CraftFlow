@@ -171,6 +171,7 @@ class Order(models.Model):
                         material=material,
                         length=length,
                         width=width,
+                        f3=new_f3,  # اضافه کردن f3 به کلید جستجو
                         defaults={
                             'name': part.name,
                             'grain': part.grain,
@@ -536,7 +537,7 @@ class ProductionTask(models.Model):
     station_name = models.CharField(max_length=50, choices=STATION_CHOICES, verbose_name="ایستگاه کاری")
     step_order = models.PositiveIntegerField(verbose_name="اولویت مرحله")
     quantity = models.PositiveIntegerField(verbose_name="عدد قطعه")
-    status = models.CharField(max_length=20, choices=TASK_STATUS, default='waiting', verbose_name="وضعیت تسک")
+    status = models.CharField(max_length=20, choices=TASK_STATUS, default='waiting', verbose_name="وضعیت")
     scanned_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, verbose_name="انجام‌دهنده")
     completed_at = PersianDateField(null=True, blank=True, verbose_name="زمان تکمیل")
     painting_stage = models.ForeignKey(
@@ -636,7 +637,20 @@ class WorkerProfile(models.Model):
     user = models.OneToOneField(User, on_delete=models.CASCADE)
     stage = models.CharField(max_length=50, choices=STATION_CHOICES, verbose_name="مرحله کاری")
     skills = models.JSONField(default=list, blank=True, verbose_name="مهارت‌ها (لیست رشته‌ها)")
-    skill_costs = models.JSONField(default=dict, blank=True, verbose_name="هزینه‌های ترجیحی مهارت‌ها")
+    skill_costs = models.JSONField(default=dict, blank=True, verbose_name="اولویت ترجیحی مهارت‌ها")
+    is_available = models.BooleanField(default=True, verbose_name="فعال برای زمان‌بندی")
+    excluded_products = models.ManyToManyField(
+        'Product',
+        blank=True,
+        verbose_name="محصولات ممنوعه",
+        help_text="کارگر در زمان‌بندی این محصولات لحاظ نمی‌شود"
+    )
+    excluded_items = models.ManyToManyField(
+        'OrderItem',
+        blank=True,
+        verbose_name="آیتم‌های ممنوعه",
+        help_text="کارگر روی این آیتم‌های خاص کار نخواهد کرد"
+    )
 
     def __str__(self):
         return f"{self.user.username} - {self.get_stage_display()}"
@@ -733,11 +747,7 @@ class PaintingProcess(models.Model):
 class PaintingStage(models.Model):
     SKILL_CHOICES = [
         ('painter', 'نقاش'),
-        ('sander', 'سنباده‌کار'),
-        ('filler', 'بتونه‌کار'),
-        ('sealer', 'سیلرکار'),
-        ('killer', 'کیلرکار'),
-        ('general', 'عمومی'),
+        ('general', 'زیرکار'),
     ]
     process = models.ForeignKey(PaintingProcess, on_delete=models.CASCADE, related_name='stages')
     order = models.PositiveSmallIntegerField(verbose_name="ترتیب مرحله")

@@ -1,9 +1,11 @@
-# product/utils.py
+# product/utils.py - اضافه کردن تابع assign_task_to_worker برای درگ‌اند‌دراپ
+
 import re
 import json
 import logging
-from datetime import timedelta
-from functools import lru_cache
+import traceback
+from datetime import datetime, time, timedelta
+from collections import defaultdict
 
 import jdatetime
 from django.db import transaction
@@ -11,9 +13,6 @@ from django.db.models import Exists, OuterRef, Prefetch, Q, Max
 from django.contrib.auth.models import User
 from django.utils import timezone
 
-# ===================================================================
-#   ایمپورت مدل‌ها
-# ===================================================================
 from .models import (
     ProductionTask,
     OrderItem,
@@ -27,62 +26,62 @@ from .models import (
 logger = logging.getLogger(__name__)
 
 # ===================================================================
-#   کش‌های سراسری (برای کاهش Query)
-#   نکته: این کش‌ها به‌صورت خودکار invalidate نمی‌شن. اگر جایی در
-#   models.py سیگنال post_save/post_delete برای PaintingProcess یا
-#   WorkerProfile دارید، از invalidate_paint_caches() در آنجا صدا بزنید.
-#   علاوه بر این، PaintingScheduler در ابتدای هر اجرا کش کارگران را
-#   به‌صورت اجباری تازه می‌کند تا زمان‌بندی همیشه روی داده‌ی زنده کار کند.
+#   کش‌های سراسری
 # ===================================================================
-_PAINT_PROCESS_CACHE = {}
+_PAINT_PROCESS_CACHE = None
 _PAINT_WORKER_CACHE = None
 
 
-def invalidate_paint_caches():
-    """پاک کردن کش‌های سراسری فرآیند نقاشی و کارگران."""
+def invalidate_caches():
     global _PAINT_PROCESS_CACHE, _PAINT_WORKER_CACHE
-    _PAINT_PROCESS_CACHE = {}
+    _PAINT_PROCESS_CACHE = None
     _PAINT_WORKER_CACHE = None
+    logger.info("کش‌های نقاشی پاک شدند.")
 
 
-def _get_process_cache(force_refresh=False):
-    """برگرداندن کش فرآیندهای نقاشی (بارگذاری یک‌باره، قابل رفرش)."""
+def _get_process_cache():
     global _PAINT_PROCESS_CACHE
-    if force_refresh or not _PAINT_PROCESS_CACHE:
-        fresh = {}
+    if _PAINT_PROCESS_CACHE is None:
+        _PAINT_PROCESS_CACHE = {}
         for p in PaintingProcess.objects.filter(is_active=True).prefetch_related('stages'):
             for code in (p.color_codes or []):
-                fresh[str(code)] = p
-        _PAINT_PROCESS_CACHE = fresh
+                _PAINT_PROCESS_CACHE[str(code)] = p
     return _PAINT_PROCESS_CACHE
 
 
-def _get_worker_cache(force_refresh=False):
-    """برگرداندن کش کارگران نقاشی (بارگذاری یک‌باره، قابل رفرش)."""
+def _get_worker_cache():
     global _PAINT_WORKER_CACHE
-    if force_refresh or _PAINT_WORKER_CACHE is None:
-        _PAINT_WORKER_CACHE = list(
-            WorkerProfile.objects.filter(stage='paint')
-            .select_related('user')
-            .values('user_id', 'skills', 'user__username')
-        )
-    return _PAINT_WORKER_CACHE
+    if _PAINT_WORKER_CACHE is None:
+        try:
+            _PAINT_WORKER_CACHE = []
+            workers_qs = WorkerProfile.objects.filter(
+                stage='paint',
+                is_available=True
+            ).select_related('user')
+            for w in workers_qs:
+                user = w.user
+                _PAINT_WORKER_CACHE.append({
+                    'user_id': user.id,
+                    'skills': list(w.skills) if isinstance(w.skills, list) else [],
+                    'full_name': f"{user.first_name} {user.last_name}".strip() or user.username,
+                })
+            logger.debug(f"کش کارگران: {len(_PAINT_WORKER_CACHE)} کارگر بارگذاری شد.")
+        except Exception as e:
+            logger.error(f"خطا در بارگذاری کش کارگران: {e}\n{traceback.format_exc()}")
+            _PAINT_WORKER_CACHE = []
+    return _PAINT_WORKER_CACHE if isinstance(_PAINT_WORKER_CACHE, list) else []
 
 
 # ===================================================================
 #   جایگزین امن برای eval
 # ===================================================================
 def _safe_eval(expr, allowed_names):
-    """
-    ارزیابی امن عبارت ریاضی با استفاده از simpleeval (در صورت وجود) یا fallback دستی.
-    """
     try:
         from simpleeval import simple_eval
         return simple_eval(expr, names=allowed_names)
     except ImportError:
         import ast
         import operator
-
         ops = {
             ast.Add: operator.add,
             ast.Sub: operator.sub,
@@ -120,7 +119,7 @@ def get_material_for_color(color_code, mapping=None):
     }
     if not isinstance(mapping, dict):
         mapping = None
-    name = mapping.get(color_code) if mapping else default_map.get(color_code)
+    name = mapping.get(color_code) if mapping else default_map.get(str(color_code))
     if name:
         material, _ = Material.objects.get_or_create(name=name, thickness=16)
         return material
@@ -229,8 +228,8 @@ def parse_jalali_date(date_str):
     try:
         y, m, d = map(int, date_str.split('-'))
         return jdatetime.date(y, m, d)
-    except (ValueError, TypeError):
-        raise ValueError('تاریخ نامعتبر')
+    except (ValueError, TypeError) as e:
+        raise ValueError(f"تاریخ نامعتبر: {date_str}") from e
 
 
 # ===================================================================
@@ -265,7 +264,10 @@ def get_painting_ready_items_queryset(search=None, process_id=None):
             Q(order__id__icontains=search) |
             Q(product__name__icontains=search) |
             Q(order__customer__name__icontains=search) |
-            Q(order__number__icontains=search)
+            Q(order__number__icontains=search) |
+            Q(order__user__username__icontains=search) |
+            Q(order__user__first_name__icontains=search) |
+            Q(order__user__last_name__icontains=search)
         )
     if process_id:
         qs = qs.filter(paint_tasks__painting_stage__process_id=process_id).distinct()
@@ -333,7 +335,7 @@ def painting_nav_context():
 # ===================================================================
 
 def _worker_day_bounds(gregorian_date):
-    from datetime import datetime, time
+    """مرزهای یک روز کاری (۸:۰۰ تا ۱۶:۳۰ با استراحت ۱۲:۳۰–۱۳:۳۰)"""
     return {
         'start': timezone.make_aware(datetime.combine(gregorian_date, time(8, 0))),
         'end': timezone.make_aware(datetime.combine(gregorian_date, time(16, 30))),
@@ -343,237 +345,413 @@ def _worker_day_bounds(gregorian_date):
 
 
 class PaintingScheduler:
-    """
-    موتور زمان‌بندی نقاشی با قابلیت:
-    - بارگذاری یک‌باره تسک‌ها و کارگران (با رفرش اجباری کش کارگران)
-    - زمان‌بندی در حافظه با پر کردن شکاف‌ها، با بررسی مجدد تداخل بعد از
-      عبور از ساعت استراحت (رفع باگ double-booking)
-    - قفل ردیف‌ها (select_for_update) هم روی تسک‌های در حال زمان‌بندی و
-      هم روی تسک‌های از قبل زمان‌بندی‌شده‌ی همان روز، همه در یک تراکنش
-      atomic واحد، تا دو اجرای همزمان روی یک روز واقعاً سریالایز بشن
-      (نه فقط لحظه‌ی ذخیره، بلکه از لحظه‌ی خواندن)
-    - ذخیره‌سازی یکجا با bulk_update روی یک لیست صریح (نه queryset)
-    - رعایت استراحت و پایان روز
-    - پشتیبانی از مهارت کارگر
-    """
-
-    MAX_GAP_ITERATIONS = 200
-
-    def __init__(self, task_ids, target_date):
-        self.task_ids = task_ids
+    def __init__(self, task_ids, target_date, initial_item_cursors=None):
+        self.task_ids = list(task_ids) if task_ids else []
         self.target_date = target_date if isinstance(target_date, jdatetime.date) else jdatetime.date.today()
         self.tasks = []
         self.workers = []
-        self.schedule = {}  # worker_id -> list of (start, end, task_or_None)
+        self.worker_schedule = {}
+        self.worker_load = {}
         self._loaded = False
+        self._all_day_tasks = []
+        self.initial_item_cursors = initial_item_cursors or {}
 
-    def _load(self, lock=False):
-        task_qs = ProductionTask.objects.filter(
-            id__in=self.task_ids,
-            station_name='paint',
-            status__in=['pending', 'waiting'],
-            scheduled_start__isnull=True,
-        ).select_related('painting_stage', 'order_item').order_by('order_item_id', 'step_order')
+        # تاریخچهٔ کارگر-به-ازای-سفارش
+        self._order_worker_history = defaultdict(set)
 
-        gregorian = self.target_date.togregorian()
-        existing_qs = ProductionTask.objects.filter(
-            station_name='paint',
-            scheduled_start__date=gregorian,
-            scheduled_start__isnull=False,
-        )
+        # کش استثناهای محصولات (کارگرهای ممنوع)
+        self._exclusion_map = {}
 
-        if lock:
-            # قفل کردن هر دو دسته‌ی تسک، تا اجرای همزمان دیگری برای همین
-            # روز مجبور بشه منتظر بمونه تا این تراکنش کامل بشه.
-            task_qs = task_qs.select_for_update()
-            existing_qs = existing_qs.select_for_update()
+        # کش آیتم‌های ممنوعه برای هر کارگر
+        self._excluded_items_map = {}
 
-        self.tasks = list(task_qs)
-        self.workers = _get_worker_cache(force_refresh=True)
-        for w in self.workers:
-            self.schedule[w['user_id']] = []
+        # ردیابی کارگران تخصیص‌یافته به هر آیتم
+        self._item_workers = defaultdict(set)
 
-        existing = existing_qs.values('assigned_worker_id', 'scheduled_start', 'scheduled_end')
-        for e in existing:
-            wid = e['assigned_worker_id']
-            if wid in self.schedule:
-                self.schedule[wid].append((e['scheduled_start'], e['scheduled_end'], None))
+    def _load(self):
+        try:
+            logger.debug(f"_load شروع شد برای {self.target_date}")
+            gregorian = self.target_date.togregorian()
+            bounds = _worker_day_bounds(gregorian)
 
-        for wid in self.schedule:
-            self.schedule[wid].sort(key=lambda x: x[0])
+            self._all_day_tasks = list(
+                ProductionTask.objects.filter(
+                    station_name='paint',
+                    scheduled_start__date=gregorian,
+                    scheduled_start__isnull=False,
+                )
+            )
+            logger.debug(f"{len(self._all_day_tasks)} تسک موجود در این روز پیدا شد.")
 
-        self._loaded = True
-        logger.info(f"بارگذاری {len(self.tasks)} تسک و {len(self.workers)} کارگر برای {self.target_date}")
+            if self.task_ids:
+                self.tasks = list(
+                    ProductionTask.objects.filter(
+                        id__in=self.task_ids,
+                        station_name='paint',
+                        status__in=['pending', 'waiting'],
+                        scheduled_start__isnull=True,
+                    ).select_related('painting_stage', 'order_item')
+                    .order_by('order_item_id', 'step_order')
+                )
+            else:
+                self.tasks = []
+            logger.debug(f"{len(self.tasks)} تسک جدید برای زمان‌بندی بارگذاری شد.")
 
-    def _find_gap(self, worker_id, duration, bounds, item_ready=None):
-        """
-        پیدا کردن اولین شکاف خالی در برنامه‌ی کارگر که:
-        - داخل ساعت کاری باشه
-        - از ساعت استراحت عبور نکنه
-        - با هیچ بازه‌ی موجودی (حتی بعد از عبور از استراحت) تداخل نداشته باشه
-        """
-        if worker_id not in self.schedule:
+            workers_data = _get_worker_cache()
+            if not isinstance(workers_data, list):
+                logger.error(f"_get_worker_cache لیست برنگرداند: {type(workers_data)}")
+                workers_data = []
+            self.workers = [w for w in workers_data if isinstance(w, dict) and 'user_id' in w]
+            logger.debug(f"{len(self.workers)} کارگر بارگذاری شدند.")
+
+            self.worker_schedule = {}
+            self.worker_load = {}
+            for w in self.workers:
+                wid = w.get('user_id')
+                if wid is not None:
+                    self.worker_schedule[wid] = []
+                    self.worker_load[wid] = 0
+
+            # افزودن بلوک ناهار
+            for wid in self.worker_schedule:
+                self.worker_schedule[wid].append(
+                    (bounds['break_start'], bounds['break_end'], None)
+                )
+
+            # پر کردن برنامه از تسک‌های موجود
+            for task in self._all_day_tasks:
+                wid = task.assigned_worker_id
+                if wid in self.worker_schedule:
+                    self.worker_schedule[wid].append((task.scheduled_start, task.scheduled_end, task))
+                    duration = int((task.scheduled_end - task.scheduled_start).total_seconds() / 60)
+                    self.worker_load[wid] = self.worker_load.get(wid, 0) + duration
+
+            for wid in self.worker_schedule:
+                self.worker_schedule[wid].sort(key=lambda x: x[0])
+
+            # تاریخچهٔ کارگر-به-ازای-سفارش
+            order_ids = {t.order_id for t in self.tasks if t.order_id is not None}
+            if order_ids:
+                history_qs = (
+                    ProductionTask.objects
+                    .filter(
+                        order_id__in=order_ids,
+                        station_name='paint',
+                        assigned_worker__isnull=False,
+                    )
+                    .values_list('order_id', 'assigned_worker_id')
+                    .distinct()
+                )
+                for order_id, worker_id in history_qs:
+                    self._order_worker_history[order_id].add(worker_id)
+
+            # پیش‌بارگذاری استثناهای محصولات
+            worker_ids = [w['user_id'] for w in self.workers if w.get('user_id')]
+            if worker_ids:
+                profiles = WorkerProfile.objects.filter(
+                    user_id__in=worker_ids
+                ).prefetch_related('excluded_products')
+                for profile in profiles:
+                    excluded_ids = set(profile.excluded_products.values_list('id', flat=True))
+                    self._exclusion_map[profile.user_id] = excluded_ids
+
+            # پر کردن _excluded_items_map
+            for w_id in worker_ids:
+                profile = WorkerProfile.objects.filter(user_id=w_id).first()
+                if profile:
+                    self._excluded_items_map[w_id] = set(
+                        profile.excluded_items.values_list('id', flat=True)
+                    )
+                else:
+                    self._excluded_items_map[w_id] = set()
+
+            # NEW: پر کردن _item_workers از تسک‌های موجود در دیتابیس
+            # تسک‌های نقاشی که قبلاً worker دارند (فارغ از روز)
+            existing_item_workers = (
+                ProductionTask.objects
+                .filter(
+                    order_item__isnull=False,
+                    station_name='paint',
+                    assigned_worker__isnull=False,
+                )
+                .values_list('order_item_id', 'assigned_worker_id')
+            )
+            for item_id, wid in existing_item_workers:
+                if item_id and wid:
+                    self._item_workers[item_id].add(wid)
+
+            self._loaded = True
+            logger.info(f"بارگذاری کامل شد: {len(self.tasks)} تسک جدید، {len(self._all_day_tasks)} تسک موجود")
+
+        except Exception as e:
+            logger.error(f"خطا در _load: {e}\n{traceback.format_exc()}")
+            raise
+
+    def _is_task_excluded_for_worker(self, worker_id, product_id, order_item_id):
+        """بررسی ممنوعیت کارگر برای محصول یا آیتم خاص"""
+        if product_id and product_id in self._exclusion_map.get(worker_id, set()):
+            return True
+        if order_item_id and order_item_id in self._excluded_items_map.get(worker_id, set()):
+            return True
+        return False
+
+    def _find_gap(self, worker_id, duration, bounds, item_ready=None, prefer_early=False):
+        if worker_id not in self.worker_schedule:
             return None
 
-        intervals = self.schedule[worker_id]
+        intervals = sorted(self.worker_schedule[worker_id], key=lambda x: x[0])
         candidate = bounds['start']
         if item_ready and item_ready > candidate:
             candidate = item_ready
 
-        for _ in range(self.MAX_GAP_ITERATIONS):
-            if candidate < bounds['start']:
-                candidate = bounds['start']
-            if candidate >= bounds['end']:
-                return None
+        best_start = None
+        best_gap = timedelta.max
 
-            # عبور از ساعت استراحت
-            if bounds['break_start'] <= candidate < bounds['break_end']:
-                candidate = bounds['break_end']
+        for start, end, _ in intervals:
+            if end <= candidate:
                 continue
+            if start > candidate:
+                gap = start - candidate
+                if gap >= timedelta(minutes=duration):
+                    if prefer_early:
+                        return candidate
+                    if gap < best_gap:
+                        best_gap = gap
+                        best_start = candidate
+                    if gap == timedelta(minutes=duration):
+                        return candidate
+            if end > candidate:
+                candidate = end
 
-            proposed_end = candidate + timedelta(minutes=duration)
-
-            # اگر تسک از وسط استراحت رد می‌شه، شروع رو به بعد از استراحت منتقل کن
-            if candidate < bounds['break_start'] and proposed_end > bounds['break_start']:
-                candidate = bounds['break_end']
-                continue
-
-            if proposed_end > bounds['end']:
-                return None
-
-            # حالا که candidate نهایی شد، با تمام بازه‌های موجود چک کن
-            conflict_end = None
-            for start, end, _ in intervals:
-                if proposed_end <= start or candidate >= end:
-                    continue
-                conflict_end = end
-                break
-
-            if conflict_end is None:
+        if bounds['end'] - candidate >= timedelta(minutes=duration):
+            if prefer_early or best_start is None:
                 return candidate
+            if bounds['end'] - candidate < best_gap:
+                best_start = candidate
+            return best_start
 
-            # تداخل پیدا شد؛ برو بعد از بازه‌ی مزاحم و دوباره تلاش کن
-            candidate = conflict_end
+        return best_start
 
-        logger.warning(f"عدم همگرایی جستجوی شکاف برای کارگر {worker_id}")
-        return None
+    def _get_gap_size(self, worker_id, start, bounds):
+        if worker_id not in self.worker_schedule:
+            return None
+        intervals = sorted(self.worker_schedule[worker_id], key=lambda x: x[0])
+        for s, e, _ in intervals:
+            if s > start:
+                return int((s - start).total_seconds() / 60)
+        return int((bounds['end'] - start).total_seconds() / 60)
 
-    def _select_worker(self, task, bounds, item_ready):
-        """انتخاب بهترین کارگر برای تسک (با رعایت مهارت و کمترین زمان شروع)"""
-        skill = task.painting_stage.required_skill if task.painting_stage else 'painter'
-        duration = task.painting_stage.duration_minutes if task.painting_stage else 60
+    def _get_worker_load(self, worker_id):
+        if worker_id not in self.worker_load:
+            total = 0
+            for start, end, task in self.worker_schedule.get(worker_id, []):
+                if task is not None and start and end:
+                    total += int((end - start).total_seconds() / 60)
+            self.worker_load[worker_id] = total
+        return self.worker_load.get(worker_id, 0)
 
-        candidates = []
-        for w in self.workers:
-            if skill not in (w.get('skills') or []) and skill != 'painter':
-                continue
-            slot = self._find_gap(w['user_id'], duration, bounds, item_ready)
-            if slot is not None:
-                candidates.append((w['user_id'], slot))
+    def _select_worker(self, task, bounds, item_ready, preferred_worker_id=None):
+        try:
+            skill = task.painting_stage.required_skill if task.painting_stage else 'painter'
+            duration = task.painting_stage.duration_minutes if task.painting_stage else 60
+            is_short_task = duration <= 30
 
-        if not candidates:
-            return None, None
+            # FIX: تعریف product_id در ابتدا
+            product = task.order_item.product if task.order_item and task.order_item.product else None
+            product_id = product.id if product else None
 
-        candidates.sort(key=lambda x: x[1])
-        return candidates[0][0], candidates[0][1]
+            candidates = []
 
-    def build(self):
-        """ساخت برنامه زمان‌بندی در حافظه"""
-        if not self._loaded:
-            self._load()
-        if not self.tasks or not self.workers:
-            return 0
+            if preferred_worker_id is not None:
+                for w in self.workers:
+                    if w.get('user_id') == preferred_worker_id:
+                        if skill in (w.get('skills') or []):
+                            if allowed_workers and preferred_worker_id not in allowed_workers:
+                                break
+                            if not self._is_task_excluded_for_worker(preferred_worker_id, product_id, task.order_item_id):
+                                slot = self._find_gap(preferred_worker_id, duration, bounds, item_ready, prefer_early=is_short_task)
+                                if slot is not None:
+                                    return preferred_worker_id, slot
+                        break
 
-        gregorian = self.target_date.togregorian()
-        bounds = _worker_day_bounds(gregorian)
-        item_cursors = {}
-        scheduled = 0
+            for w in self.workers:
+                wid = w.get('user_id')
+                if wid is None:
+                    continue
+                if skill not in (w.get('skills') or []):
+                    continue
 
-        for task in self.tasks:
+                if self._is_task_excluded_for_worker(wid, product_id, task.order_item_id):
+                    continue
+
+                slot = self._find_gap(wid, duration, bounds, item_ready, prefer_early=is_short_task)
+                if slot is None:
+                    continue
+
+                load = self._get_worker_load(wid)
+                score = (slot - bounds['start']).total_seconds() / 60 + load * 5
+
+                existing_worker_ids = self._order_worker_history.get(task.order_id, set())
+                if wid in existing_worker_ids:
+                    score -= 200
+
+                if is_short_task:
+                    gap_size = self._get_gap_size(wid, slot, bounds)
+                    if gap_size and gap_size <= duration * 2:
+                        score -= 40
+
+                candidates.append((score, wid, slot))
+
+            if not candidates:
+                return None, None
+
+            candidates.sort(key=lambda x: x[0])
+            return candidates[0][1], candidates[0][2]
+
+        except Exception as e:
+            logger.error(f"خطا در _select_worker: {e}\n{traceback.format_exc()}")
+            raise
+
+    def _assign_task(self, task, worker_id, start, bounds):
+        try:
             duration = task.painting_stage.duration_minutes if task.painting_stage else 60
             drying = task.painting_stage.drying_time_minutes if task.painting_stage else 0
-            item_ready = item_cursors.get(task.order_item_id)
-
-            wid, start = self._select_worker(task, bounds, item_ready)
-            if wid is None:
-                continue
-
             end = start + timedelta(minutes=duration)
 
-            self.schedule[wid].append((start, end, task))
-            self.schedule[wid].sort(key=lambda x: x[0])
+            if worker_id not in self.worker_schedule:
+                self.worker_schedule[worker_id] = []
+            self.worker_schedule[worker_id].append((start, end, task))
+            self.worker_schedule[worker_id].sort(key=lambda x: x[0])
+            if task is not None:
+                self.worker_load[worker_id] = self.worker_load.get(worker_id, 0) + duration
 
-            task._assigned_worker_id = wid
+            task._assigned_worker_id = worker_id
             task._scheduled_start = start
             task._scheduled_end = end
 
-            item_cursors[task.order_item_id] = end + timedelta(minutes=drying)
-            scheduled += 1
+            if task.order_id is not None:
+                self._order_worker_history[task.order_id].add(worker_id)
 
-        logger.info(f"{scheduled} تسک از {len(self.tasks)} زمان‌بندی شد.")
-        return scheduled
+            # NEW: بروزرسانی _item_workers در حافظه
+            if task.order_item_id:
+                self._item_workers[task.order_item_id].add(worker_id)
+
+            return end + timedelta(minutes=drying)
+
+        except Exception as e:
+            logger.error(f"خطا در _assign_task برای task {task.id}: {e}\n{traceback.format_exc()}")
+            raise
+
+    def build(self):
+        try:
+            if not self._loaded:
+                self._load()
+
+            if not self.tasks or not self.workers:
+                return 0
+
+            gregorian = self.target_date.togregorian()
+            bounds = _worker_day_bounds(gregorian)
+
+            self.tasks.sort(key=lambda t: (t.order_item_id, t.step_order))
+
+            scheduled = 0
+            item_cursors = dict(self.initial_item_cursors)
+
+            for task in self.tasks:
+                duration = task.painting_stage.duration_minutes if task.painting_stage else 60
+                drying = task.painting_stage.drying_time_minutes if task.painting_stage else 0
+
+                cursor_key = (task.order_item_id, task.color_part)
+                item_ready = item_cursors.get(cursor_key)
+
+                wid, start = self._select_worker(task, bounds, item_ready, preferred_worker_id=None)
+                if wid is None:
+                    continue
+
+                next_ready = self._assign_task(task, wid, start, bounds)
+                item_cursors[cursor_key] = next_ready
+                scheduled += 1
+
+            self._remaining_item_cursors = item_cursors
+
+            logger.info(f"{scheduled} تسک از {len(self.tasks)} زمان‌بندی شد.")
+            return scheduled
+
+        except Exception as e:
+            logger.error(f"خطا در build: {e}\n{traceback.format_exc()}")
+            raise
 
     def apply(self):
-        """
-        اعمال تغییرات در دیتابیس. اگر تسک‌های self.tasks از قبل با
-        select_for_update قفل شده باشن (یعنی از طریق run() صدا زده شده)،
-        همون آبجکت‌های قفل‌شده مستقیماً آپدیت می‌شن؛ در غیر این صورت
-        یک قفل مستقل و مقطعی فقط روی همین تسک‌ها گرفته می‌شه (سازگاری
-        با کدهای قدیمی که مستقیماً apply() را صدا می‌زنند).
-        """
-        if not self._loaded:
-            self._load()
+        try:
+            tasks_to_update = [t for t in self.tasks if hasattr(t, '_assigned_worker_id')]
+            if not tasks_to_update:
+                return 0
 
-        tasks_to_update = [t for t in self.tasks if hasattr(t, '_assigned_worker_id')]
-        if not tasks_to_update:
-            return 0
-
-        def _write(objs):
-            for task in objs:
+            for task in tasks_to_update:
                 task.assigned_worker_id = getattr(task, '_assigned_worker_id', None)
                 task.scheduled_start = getattr(task, '_scheduled_start', None)
                 task.scheduled_end = getattr(task, '_scheduled_end', None)
+
             ProductionTask.objects.bulk_update(
-                objs, ['assigned_worker_id', 'scheduled_start', 'scheduled_end']
+                tasks_to_update,
+                ['assigned_worker_id', 'scheduled_start', 'scheduled_end']
             )
 
-        if transaction.get_connection().in_atomic_block:
-            # از قبل داخل تراکنش (معمولاً از طریق run())؛ آبجکت‌های فعلی
-            # همان‌هایی هستن که قفل شدن، دوباره کوئری نمی‌گیریم.
-            _write(tasks_to_update)
+            logger.info(f"{len(tasks_to_update)} تسک در دیتابیس به‌روزرسانی شد.")
+            return len(tasks_to_update)
+
+        except Exception as e:
+            logger.error(f"خطا در apply: {e}\n{traceback.format_exc()}")
+            raise
+
+    def schedule(self):
+        try:
+            logger.info(f"شروع schedule برای {self.target_date} با {len(self.task_ids)} تسک")
+            self._load()
+            count = self.build()
+            self.apply()
+            logger.info(f"زمان‌بندی کامل شد: {count} تسک")
+            return count, getattr(self, '_remaining_item_cursors', {})
+        except Exception as e:
+            logger.error(f"خطا در schedule: {e}\n{traceback.format_exc()}")
+            raise
+
+
+# ===================================================================
+#   توابع عمومی زمان‌بندی
+# ===================================================================
+
+def _get_initial_item_cursors(item_ids):
+    cursors = {}
+
+    parts = (
+        ProductionTask.objects
+        .filter(order_item_id__in=item_ids, station_name='paint')
+        .values_list('order_item_id', 'color_part')
+        .distinct()
+    )
+
+    for item_id, color_part in parts:
+        last_task = ProductionTask.objects.filter(
+            order_item_id=item_id,
+            color_part=color_part,
+            station_name='paint',
+            scheduled_end__isnull=False,
+        ).order_by('-scheduled_end').first()
+
+        if last_task:
+            drying = last_task.painting_stage.drying_time_minutes if last_task.painting_stage else 0
+            cursors[(item_id, color_part)] = last_task.scheduled_end + timedelta(minutes=drying)
         else:
-            with transaction.atomic():
-                ids = [t.id for t in tasks_to_update]
-                locked = list(ProductionTask.objects.select_for_update().filter(id__in=ids))
-                locked_by_id = {t.id: t for t in locked}
-                for t in tasks_to_update:
-                    locked_obj = locked_by_id[t.id]
-                    locked_obj._assigned_worker_id = t._assigned_worker_id
-                    locked_obj._scheduled_start = t._scheduled_start
-                    locked_obj._scheduled_end = t._scheduled_end
-                _write(locked)
+            cursors[(item_id, color_part)] = None
 
-        logger.info(f"{len(tasks_to_update)} تسک در دیتابیس به‌روزرسانی شد.")
-        return len(tasks_to_update)
-
-    def run(self):
-        """
-        نقطه‌ی ورود توصیه‌شده: بارگذاری + ساخت برنامه + ذخیره، همه داخل
-        یک تراکنش atomic واحد با قفل روی تسک‌های مرتبط، تا اجرای همزمان
-        این کلاس برای یک روز/کارگر مشترک واقعاً سریالایز بشه.
-        """
-        with transaction.atomic():
-            self._load(lock=True)
-            scheduled = self.build()
-            applied = self.apply()
-        return scheduled, applied
+    return cursors
 
 
-# ===================================================================
-#   توابع عمومی زمان‌بندی (با استفاده از Scheduler)
-# ===================================================================
-
-def schedule_paint_tasks_for_items(item_ids, target_date):
+def schedule_paint_tasks_for_items(item_ids, target_date, initial_item_cursors=None):
+    if not item_ids:
+        return 0, {}
     task_ids = list(
         ProductionTask.objects.filter(
             order_item_id__in=item_ids,
@@ -583,13 +761,19 @@ def schedule_paint_tasks_for_items(item_ids, target_date):
         ).values_list('id', flat=True)
     )
     if not task_ids:
-        return 0
-    sched = PaintingScheduler(task_ids, target_date)
-    cnt, _ = sched.run()
-    return cnt
+        return 0, {}
+
+    sched = PaintingScheduler(task_ids, target_date, initial_item_cursors)
+    if not isinstance(sched, PaintingScheduler):
+        logger.error(f"خطا: sched از نوع {type(sched)} است، انتظار PaintingScheduler داشتیم.")
+        raise TypeError(f"sched باید از نوع PaintingScheduler باشد، اما {type(sched)} دریافت شد.")
+
+    return sched.schedule()
 
 
-def schedule_paint_items_auto(item_ids, start_date=None):
+def schedule_paint_items_auto(item_ids, start_date=None, max_days=100, initial_item_cursors=None):
+    if not item_ids:
+        return 0, None, {}
     if start_date is None:
         start_date = jdatetime.date.today()
 
@@ -603,15 +787,21 @@ def schedule_paint_items_auto(item_ids, start_date=None):
     )
 
     if not remaining:
-        return 0, None
+        return 0, None, {}
+
+    if initial_item_cursors is None:
+        initial_item_cursors = _get_initial_item_cursors(item_ids)
 
     total = 0
     cur_date = start_date
     safety = 0
-    while remaining and safety < 30:
-        sched = PaintingScheduler(remaining, cur_date)
-        cnt, _ = sched.run()
+    item_cursors = dict(initial_item_cursors)
+
+    while remaining and safety < max_days:
+        sched = PaintingScheduler(remaining, cur_date, item_cursors)
+        cnt, new_cursors = sched.schedule()
         total += cnt
+        item_cursors.update(new_cursors)
 
         remaining = list(
             ProductionTask.objects.filter(
@@ -624,73 +814,123 @@ def schedule_paint_items_auto(item_ids, start_date=None):
         cur_date += jdatetime.timedelta(days=1)
         safety += 1
 
-    return total, cur_date - jdatetime.timedelta(days=1)
+    if remaining:
+        logger.warning(f"{len(remaining)} تسک پس از {max_days} روز همچنان زمان‌بندی نشده‌اند.")
+
+    return total, cur_date - jdatetime.timedelta(days=1), item_cursors
 
 
 def auto_assign_paint_tasks(target_date=None):
     if target_date is None:
         target_date = jdatetime.date.today()
 
-    task_ids = list(
-        ProductionTask.objects.filter(
-            station_name='paint',
-            part__isnull=True,
-            assigned_worker__isnull=True,
-            status__in=['pending', 'waiting'],
-            scheduled_start__isnull=True,
-        ).values_list('id', flat=True)
+    tasks_qs = ProductionTask.objects.filter(
+        station_name='paint',
+        assigned_worker__isnull=True,
+        status__in=['pending', 'waiting'],
+        order_item__isnull=False,
+        painting_stage__isnull=False,
     )
+    if target_date:
+        gregorian = target_date.togregorian()
+        tasks_qs = tasks_qs.filter(
+            Q(scheduled_start__isnull=True) | Q(scheduled_start__date=gregorian)
+        )
+
+    task_ids = list(tasks_qs.values_list('id', flat=True))
     if not task_ids:
         return 0
-    sched = PaintingScheduler(task_ids, target_date)
-    cnt, _ = sched.run()
+
+    item_ids = list(tasks_qs.values_list('order_item_id', flat=True).distinct())
+    initial_cursors = _get_initial_item_cursors(item_ids)
+
+    sched = PaintingScheduler(task_ids, target_date, initial_cursors)
+    cnt, _ = sched.schedule()
     return cnt
 
 
 def create_and_schedule_items_for_date(item_ids, target_date=None):
-    items = OrderItem.objects.filter(pk__in=item_ids).prefetch_related('ordercolor', 'paint_tasks')
-    created_items = []
-    skipped = []
-    new_tasks = []
+    try:
+        if target_date is None:
+            target_date = jdatetime.date.today()
+            logger.info("target_date None بود، تاریخ امروز جایگزین شد.")
 
-    for item in items:
-        if item.paint_tasks.filter(station_name='paint').exists():
-            continue
-        assignments = get_item_color_assignments(item)
-        if not assignments:
-            skipped.append({'item_id': item.id, 'reason': 'no_color'})
-            continue
-        base_step = 0
-        any_created = False
-        for part_name, color_code in assignments:
-            process = get_painting_process_for_color(color_code)
-            if not process:
+        if not isinstance(target_date, jdatetime.date):
+            logger.error(f"target_date از نوع {type(target_date)} است. جایگزین با امروز.")
+            target_date = jdatetime.date.today()
+
+        # ایجاد تسک‌های جدید
+        items = OrderItem.objects.filter(pk__in=item_ids).prefetch_related('ordercolor', 'paint_tasks')
+        created_items = []
+        skipped = []
+        new_tasks = []
+
+        for item in items:
+            if item.paint_tasks.filter(station_name='paint').exists():
                 continue
-            create_paint_tasks(
-                tasks_list=new_tasks,
-                order=item.order,
-                quantity=item.quantity,
-                process=process,
-                base_step=base_step,
-                order_item=item,
-                color_part=part_name,
-            )
-            base_step += process.stages.count()
-            any_created = True
-        if any_created:
-            created_items.append(item.id)
-        else:
-            skipped.append({'item_id': item.id, 'reason': 'no_process_match'})
+            assignments = get_item_color_assignments(item)
+            if not assignments:
+                skipped.append({'item_id': item.id, 'reason': 'no_color'})
+                continue
+            base_step = 0
+            any_created = False
+            for part_name, color_code in assignments:
+                process = get_painting_process_for_color(color_code)
+                if not process:
+                    continue
+                create_paint_tasks(
+                    tasks_list=new_tasks,
+                    order=item.order,
+                    quantity=item.quantity,
+                    process=process,
+                    base_step=base_step,
+                    order_item=item,
+                    color_part=part_name,
+                )
+                base_step += process.stages.count()
+                any_created = True
+            if any_created:
+                created_items.append(item.id)
+            else:
+                skipped.append({'item_id': item.id, 'reason': 'no_process_match'})
 
-    if new_tasks:
-        ProductionTask.objects.bulk_create(new_tasks)
+        if new_tasks:
+            ProductionTask.objects.bulk_create(new_tasks)
 
-    if target_date:
-        cnt = schedule_paint_tasks_for_items(item_ids, target_date)
-        return {'scheduled_count': cnt, 'scheduled_date': target_date, 'created_items': created_items, 'skipped': skipped}
-    else:
-        cnt, date = schedule_paint_items_auto(item_ids)
-        return {'scheduled_count': cnt, 'scheduled_date': date, 'created_items': created_items, 'skipped': skipped}
+        # زمان‌بندی همه تسک‌ها
+        all_item_ids = list(
+            ProductionTask.objects.filter(
+                order_item_id__in=item_ids,
+                station_name='paint',
+                status__in=['pending', 'waiting'],
+                scheduled_start__isnull=True,
+            ).values_list('order_item_id', flat=True).distinct()
+        )
+
+        if not all_item_ids:
+            return {
+                'scheduled_count': 0,
+                'scheduled_date': target_date,
+                'created_items': created_items,
+                'skipped': skipped
+            }
+
+        initial_cursors = _get_initial_item_cursors(all_item_ids)
+
+        cnt, last_date, _ = schedule_paint_items_auto(
+            all_item_ids, target_date, max_days=100, initial_item_cursors=initial_cursors
+        )
+
+        return {
+            'scheduled_count': cnt,
+            'scheduled_date': last_date or target_date,
+            'created_items': created_items,
+            'skipped': skipped
+        }
+
+    except Exception as e:
+        logger.error(f"خطا در create_and_schedule_items_for_date: {e}\n{traceback.format_exc()}")
+        raise
 
 
 def repaint_item_ids_for_date(item_ids, target_date):
@@ -710,3 +950,140 @@ def repaint_item_ids_for_date(item_ids, target_date):
             raise ValueError(f'{done} تسک قبلاً انجام شده و نمی‌تواند بازنشانی شود.')
         ProductionTask.objects.filter(pk__in=task_ids).delete()
     return create_and_schedule_items_for_date(item_ids, target_date)
+
+
+# ===================================================================
+#   تابع اختصاصی برای درگ‌اند‌دراپ (تخصیص دستی کارگر به تسک)
+# ===================================================================
+
+def assign_task_to_worker(task_id, worker_id):
+    """
+    تخصیص دستی یک تسک نقاشی به یک کارگر خاص (برای درگ‌اند‌دراپ در کانبان).
+
+    پارامترها:
+        task_id: شناسه تسک نقاشی
+        worker_id: شناسه کاربر کارگر
+
+    خروجی:
+        dict: {'ok': True/False, 'error': str (در صورت خطا)}
+              در صورت موفقیت:
+              {'ok': True, 'scheduled_start': '08:30', 'scheduled_end': '09:15'}
+    """
+    try:
+        # ۱. دریافت تسک
+        task = ProductionTask.objects.select_related(
+            'painting_stage', 'order_item', 'order_item__product'
+        ).filter(
+            pk=task_id,
+            station_name='paint'
+        ).first()
+
+        if not task:
+            return {'ok': False, 'error': 'تسک یافت نشد'}
+
+        if task.status == 'done':
+            return {'ok': False, 'error': 'این تسک قبلاً انجام شده است'}
+
+        # ۲. دریافت کارگر مقصد از کش کارگران فعال
+        workers = _get_worker_cache()
+        worker_data = next((w for w in workers if w['user_id'] == int(worker_id)), None)
+
+        if not worker_data:
+            return {'ok': False, 'error': 'کارگر یافت نشد یا غیرفعال است'}
+
+        # ۳. بررسی مهارت
+        required_skill = task.painting_stage.required_skill if task.painting_stage else 'painter'
+        if required_skill not in (worker_data.get('skills') or []):
+            return {
+                'ok': False,
+                'error': f'کارگر مهارت "{required_skill}" را ندارد. مهارت‌های فعلی: {", ".join(worker_data.get("skills") or [])}'
+            }
+
+        # ۴. بررسی استثناهای محصول
+        product = task.order_item.product if task.order_item and task.order_item.product else None
+        if product:
+            worker_profile = WorkerProfile.objects.filter(user_id=worker_id).first()
+            if worker_profile and worker_profile.excluded_products.filter(id=product.id).exists():
+                return {'ok': False, 'error': f'این کارگر برای محصول "{product.name}" ممنوع است'}
+
+        # ۴-ب. بررسی ممنوعیت آیتم خاص
+        if task.order_item_id:
+            worker_profile = WorkerProfile.objects.filter(user_id=worker_id).first()
+            if worker_profile and worker_profile.excluded_items.filter(id=task.order_item_id).exists():
+                return {
+                    'ok': False,
+                    'error': f'کارگر برای این آیتم (شماره {task.order_item_id}) ممنوع شده است.'
+                }
+
+        # ۶. محاسبه زمان با استفاده از منطق Scheduler
+        if task.scheduled_start:
+            ref_date = task.scheduled_start.date()
+        else:
+            ref_date = timezone.localdate()
+
+        bounds = _worker_day_bounds(ref_date)
+
+        # ساختن یک Scheduler موقت برای استفاده از _find_gap
+        temp_scheduler = PaintingScheduler([], jdatetime.date.fromgregorian(date=ref_date))
+        temp_scheduler._loaded = True
+        temp_scheduler.workers = workers
+        temp_scheduler.worker_schedule = {}
+
+        # پر کردن worker_schedule با تسک‌های موجود این کارگر در آن روز (به‌غیر از خود تسک)
+        existing_tasks = ProductionTask.objects.filter(
+            assigned_worker_id=worker_id,
+            station_name='paint',
+            scheduled_start__date=ref_date,
+            scheduled_start__isnull=False,
+        ).exclude(pk=task_id)
+
+        temp_scheduler.worker_schedule[worker_id] = []
+        for et in existing_tasks:
+            temp_scheduler.worker_schedule[worker_id].append(
+                (et.scheduled_start, et.scheduled_end, et)
+            )
+        # اضافه کردن بلوک ناهار
+        temp_scheduler.worker_schedule[worker_id].append(
+            (bounds['break_start'], bounds['break_end'], None)
+        )
+        temp_scheduler.worker_schedule[worker_id].sort(key=lambda x: x[0])
+
+        duration = task.painting_stage.duration_minutes if task.painting_stage else 60
+        start = temp_scheduler._find_gap(worker_id, duration, bounds, item_ready=None, prefer_early=True)
+
+        if start is None:
+            return {'ok': False, 'error': 'کارگر در این روز ظرفیت کافی ندارد'}
+
+        end = start + timedelta(minutes=duration)
+
+        # ۷. ذخیره تغییرات
+        task.assigned_worker_id = worker_id
+        task.scheduled_start = start
+        task.scheduled_end = end
+        task.save(update_fields=['assigned_worker_id', 'scheduled_start', 'scheduled_end'])
+
+        return {
+            'ok': True,
+            'scheduled_start': start.strftime('%H:%M'),
+            'scheduled_end': end.strftime('%H:%M'),
+        }
+
+    except Exception as e:
+        logger.error(f"خطا در assign_task_to_worker: {e}\n{traceback.format_exc()}")
+        return {'ok': False, 'error': f'خطای داخلی: {str(e)}'}
+
+
+# ===================================================================
+#   سیگنال‌ها
+# ===================================================================
+from django.db.models.signals import post_save, post_delete
+
+
+def _invalidate_on_change(sender, **kwargs):
+    invalidate_caches()
+
+
+post_save.connect(_invalidate_on_change, sender=PaintingProcess)
+post_delete.connect(_invalidate_on_change, sender=PaintingProcess)
+post_save.connect(_invalidate_on_change, sender=WorkerProfile)
+post_delete.connect(_invalidate_on_change, sender=WorkerProfile)

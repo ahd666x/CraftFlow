@@ -7,6 +7,39 @@ from django.contrib.auth import views as auth_views
 
 
 urlpatterns = [
+
+
+
+
+
+    path('painting/api/workers/', views.painting_workers_api, name='painting_workers_api'),
+    path('painting/api/workers/<int:worker_id>/', views.painting_worker_detail_api, name='painting_worker_detail_api'),
+
+    # دو مسیر مجزا با نام‌های متفاوت
+    path('painting/api/workers/<int:worker_id>/excluded-products/',
+         views.painting_worker_exclusion_api,
+         name='painting_worker_excluded_products_api'),   # ← نام جدید
+
+    path('painting/api/workers/<int:worker_id>/excluded-items/',
+         views.painting_worker_exclusion_api,
+         name='painting_worker_excluded_items_api'),      # ← نام جدید
+
+    path('painting/api/products/search/', views.search_products_api, name='search_products_api'),
+    path('painting/api/items/search/', views.search_items_api, name='search_items_api'),
+
+    # مدیریت سفارشات (ادمین)
+    path('management/orders/<int:order_id>/edit/', views.admin_edit_order, name='admin_edit_order'),
+    path('management/orders/item/<int:item_id>/delete/', views.admin_delete_order_item, name='admin_delete_order_item'),
+    path('management/orders/<int:order_id>/add-item/', views.admin_add_order_item, name='admin_add_order_item'),
+    path('management/orders/<int:order_id>/delete/', views.admin_delete_order, name='admin_delete_order'),
+    path('management/orders/item/<int:item_id>/edit/', views.admin_edit_order_item, name='admin_edit_order_item'),
+    # (اختیاری) ویرایش آیتم توسط ادمین – می‌توانید از customer_edit_order_item با تغییر دسترسی استفاده کنید
+    # اما بهتر است یک ویو مجزا بسازیم
+    # path('admin/orders/item/<int:item_id>/edit/', views.admin_edit_order_item, name='admin_edit_order_item'),
+    # مدیریت تسک‌های سفارش
+    path('management/orders/<int:order_id>/tasks/', views.admin_order_tasks, name='admin_order_tasks'),
+    path('management/task/<int:task_id>/delete/', views.admin_delete_task, name='admin_delete_task'),
+    path('management/tasks/', views.admin_tasks_management, name='admin_tasks_management'),
     path('', views.dashboard, name='dashboard'),
     path('orders/', views.order_list, name='order_list'),
     path('orderlist/', views.order_item_list, name='order_item_list'),
@@ -128,6 +161,7 @@ urlpatterns = [
     path('painting/stages/<int:process_id>/', views.painting_stages_view, name='painting_stages_process'),
     path('painting/stages/<int:stage_id>/get/', views.painting_stage_detail_api, name='painting_stage_detail'),
     path('painting/workers/', views.painting_workers_view, name='painting_workers'),
+    path('painting/workers/<int:worker_id>/excluded-items/', views.painting_worker_excluded_items, name='painting_worker_excluded_items'),
     path('painting/schedule/', views.painting_schedule_view, name='painting_schedule'),
     path('painting/ready-list/', views.painting_ready_list, name='painting_ready_list'),
     path('painting/add-to-schedule/', views.painting_add_to_schedule, name='painting_add_to_schedule'),
@@ -138,6 +172,7 @@ urlpatterns = [
     path('painting/unassign-worker/', views.painting_unassign_worker, name='painting_unassign_worker'),
     path('painting/delete-tasks/', views.painting_delete_tasks, name='painting_delete_tasks'),
     path('painting/clear-schedule/', views.painting_clear_schedule, name='painting_clear_schedule'),
+    path('painting/reset-schedule/', views.painting_reset_schedule, name='painting_reset_schedule'),
     path('painting/repaint-items/', views.painting_repaint_items, name='painting_repaint_items'),
     path('orders/<int:order_id>/delete-tasks/', views.delete_all_tasks, name='delete_all_tasks'),
     path('item/<int:item_id>/delete-paint-tasks/', views.delete_paint_tasks, name='delete_paint_tasks'),

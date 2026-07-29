@@ -116,3 +116,13 @@ def persian_date(value):
         return jdatetime.date.fromgregorian(date=value).strftime('%Y/%m/%d')
     except Exception:
         return str(value)
+
+@register.filter
+def task_color_code(task):
+    """دریافت کد رنگ متناظر با color_part یک وظیفه تولید"""
+    if not hasattr(task, 'order_item') or not task.order_item:
+        return '-'
+    for c in task.order_item.ordercolor.all():
+        if c.part == task.color_part:
+            return c.code
+    return '-'

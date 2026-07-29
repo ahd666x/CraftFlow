@@ -1,0 +1,121 @@
+{% extends "painting_management/base.html" %}
+{% block title %}آیتم‌های ممنوعه - {{ worker.user.get_full_name|default:worker.user.username }}{% endblock %}
+
+{% block painting_content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h2>🚫 آیتم‌های ممنوعه برای کارگر</h2>
+    <div>
+        <a href="{% url 'painting_workers' %}" class="btn btn-outline-secondary">
+            <i class="bi bi-arrow-right"></i> بازگشت به لیست کارگران
+        </a>
+    </div>
+</div>
+
+<div class="card mb-4">
+    <div class="card-header bg-primary text-white">
+        <h5 class="mb-0">👷 {{ worker.user.get_full_name|default:worker.user.username }}</h5>
+    </div>
+    <div class="card-body">
+        <p><strong>ایستگاه:</strong> {{ worker.get_stage_display }}</p>
+        <p><strong>مهارت‌ها:</strong>
+            {% for skill in worker.skills %}
+                <span class="badge bg-info">{{ skill }}</span>
+            {% empty %}-{% endfor %}
+        </p>
+        <p><strong>وضعیت:</strong>
+            {% if worker.is_available %}
+            <span class="badge bg-success">فعال</span>
+            {% else %}
+            <span class="badge bg-secondary">غیرفعال</span>
+            {% endif %}
+        </p>
+        <p><strong>محصولات ممنوعه ({{ excluded_products.count }}):</strong></p>
+        {% if excluded_products.exists %}
+        <div class="d-flex flex-wrap gap-1">
+            {% for product in excluded_products %}
+            <span class="badge bg-danger">{{ product.name }}</span>
+            {% endfor %}
+        </div>
+        {% else %}
+        <p class="text-muted">هیچ محصول ممنوعه‌ای تعریف نشده است.</p>
+        {% endif %}
+    </div>
+</div>
+
+<h4 class="mb-3">📦 آیتم‌های سفارشی ممنوعه ({{ excluded_count }})</h4>
+
+{% if direct_count or product_count %}
+<div class="alert alert-light border">
+    <span class="badge bg-danger me-2">آیتم خاص: {{ direct_count }}</span>
+    <span class="badge bg-warning text-dark">به دلیل محصول ممنوع: {{ product_count }}</span>
+</div>
+{% endif %}
+
+{% if excluded_items.exists %}
+<div class="table-responsive">
+    <table class="table table-striped table-hover">
+        <thead>
+            <tr>
+                <th>کد سفارش</th>
+                <th>مشتری</th>
+                <th>محصول</th>
+                <th>آیتم</th>
+                <th>رنگ‌ها</th>
+                <th>تعداد</th>
+                <th>وضعیت سفارش</th>
+                <th>دلیل ممنوعیت</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for item in excluded_items %}
+            <tr>
+                <td>{{ item.order.id }}</td>
+                <td>{{ item.order.customer.name }}</td>
+                <td>{{ item.product.name }}</td>
+                <td><a href="{% url 'item_detail' item.id %}">#{{ item.id }}</a></td>
+                <td>{{ item.color_summary }}</td>
+                <td>{{ item.quantity }}</td>
+                <td>
+                    {% if item.order.status == 'draft' %}پیش‌نویس
+                    {% elif item.order.status == 'planned' %}برنامه‌ریزی
+                    {% elif item.order.status == 'producing' %}در حال تولید
+                    {% elif item.order.status == 'completed' %}تکمیل شده
+                    {% else %}{{ item.order.status }}{% endif %}
+                </td>
+                <td>
+                    {% if item.ban_reason == 'item' %}
+                        <span class="badge bg-danger">آیتم خاص</span>
+                    {% else %}
+                        <span class="badge bg-warning text-dark">محصول ممنوع</span>
+                    {% endif %}
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+
+<!-- صفحه‌بندی -->
+{% if excluded_items.has_other_pages %}
+<nav>
+    <ul class="pagination justify-content-center">
+        {% if excluded_items.has_previous %}
+        <li class="page-item"><a class="page-link" href="?page=1">&laquo;</a></li>
+        <li class="page-item"><a class="page-link" href="?page={{ excluded_items.previous_page_number }}">قبلی</a></li>
+        {% endif %}
+        <li class="page-item active"><span class="page-link">{{ excluded_items.number }}</span></li>
+        {% if excluded_items.has_next %}
+        <li class="page-item"><a class="page-link" href="?page={{ excluded_items.next_page_number }}">بعدی</a></li>
+        <li class="page-item"><a class="page-link" href="?page={{ excluded_items.paginator.num_pages }}">&raquo;</a></li>
+        {% endif %}
+    </ul>
+</nav>
+{% endif %}
+
+{% else %}
+<div class="alert alert-info">
+    <i class="bi bi-check-circle"></i>
+    این کارگر هیچ آیتم سفارشی ممنوعه‌ای ندارد. همه‌ی آیتم‌ها برای او مجاز هستند.
+</div>
+{% endif %}
+{% endblock %}

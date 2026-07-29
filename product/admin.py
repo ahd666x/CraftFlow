@@ -90,8 +90,23 @@ class ProductCategoryAdmin(admin.ModelAdmin):
 
 @admin.register(WorkerProfile)
 class WorkerProfileAdmin(admin.ModelAdmin):
-    list_display = ['user', 'stage']
-    list_filter = ['stage']
+    list_display = ['user', 'stage', 'is_available', 'skills']
+    list_filter = ['stage', 'is_available']
+    list_editable = ['is_available']
+    search_fields = ['user__username', 'user__first_name', 'user__last_name']
+    filter_horizontal = ['excluded_products']
+    fieldsets = (
+        ('اطلاعات کاربر', {
+            'fields': ('user', 'stage')
+        }),
+        ('مهارت‌ها و هزینه‌ها', {
+            'fields': ('skills', 'skill_costs')
+        }),
+        ('تنظیمات زمان‌بندی', {
+            'fields': ('is_available', 'excluded_products'),
+            'description': 'محصولاتی که این کارگر نباید در آنها کار کند'
+        }),
+    )
 
 class ColorInline(admin.TabularInline):
     model = Color

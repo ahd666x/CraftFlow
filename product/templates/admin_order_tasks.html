@@ -1,0 +1,87 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block title %}مدیریت تسک‌های سفارش #{{ order.id }}{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h2><i class="bi bi-tasks text-primary"></i> مدیریت تسک‌های سفارش #{{ order.id }}</h2>
+        <div>
+            <a href="{% url 'order_detail' order.id %}" class="btn btn-secondary">
+                <i class="bi bi-arrow-right"></i> بازگشت به سفارش
+            </a>
+        </div>
+    </div>
+
+    <div class="card shadow-sm">
+        <div class="card-header bg-dark text-white">
+            <h5 class="mb-0">لیست تسک‌ها ({{ tasks|length }})</h5>
+        </div>
+        <div class="card-body p-0">
+            <div class="table-responsive">
+                <table class="table table-hover align-middle mb-0">
+                    <thead class="table-light">
+                        <tr>
+                            <th>اولویت</th>
+                            <th>قطعه</th>
+                            <th>ایستگاه</th>
+                            <th>تعداد</th>
+                            <th>وضعیت</th>
+                            <th>کارگر</th>
+                            <th>زمان شروع</th>
+                            <th>زمان پایان</th>
+                            <th>عملیات</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for task in tasks %}
+                        <tr>
+                            <td>{{ task.step_order }}</td>
+                            <td>{{ task.part.name|default:"-" }}</td>
+                            <td>{{ task.get_station_name_display }}</td>
+                            <td>{{ task.quantity }}</td>
+                            <td>
+                                <span class="badge 
+                                    {% if task.status == 'done' %}bg-success
+                                    {% elif task.status == 'pending' %}bg-warning text-dark
+                                    {% else %}bg-secondary{% endif %}">
+                                    {{ task.get_status_display }}
+                                </span>
+                            </td>
+                            <td>{{ task.assigned_worker|default:"-" }}</td>
+                            <td>{{ task.scheduled_start|default:"-" }}</td>
+                            <td>{{ task.scheduled_end|default:"-" }}</td>
+                            <td>
+                                <form method="post" style="display:inline;">
+                                    {% csrf_token %}
+                                    <input type="hidden" name="task_id" value="{{ task.id }}">
+                                    <select name="status" class="form-select form-select-sm" onchange="this.form.submit()" style="width: auto; display: inline-block;">
+                                        <option value="waiting" {% if task.status == 'waiting' %}selected{% endif %}>در انتظار</option>
+                                        <option value="pending" {% if task.status == 'pending' %}selected{% endif %}>آماده</option>
+                                        <option value="done" {% if task.status == 'done' %}selected{% endif %}>انجام شده</option>
+                                    </select>
+                                </form>
+                                <form method="post" action="{% url 'admin_delete_task' task.id %}" style="display:inline;" onsubmit="return confirm('آیا از حذف این تسک اطمینان دارید؟')">
+                                    {% csrf_token %}
+                                    <button type="submit" class="btn btn-sm btn-outline-danger">
+                                        <i class="bi bi-trash"></i>
+                                    </button>
+                                </form>
+                            </td>
+                        </tr>
+                        {% empty %}
+                        <tr>
+                            <td colspan="9" class="text-center py-4 text-muted">
+                                <i class="bi bi-inbox fs-2 d-block mb-2"></i>
+                                هیچ تسکی برای این سفارش وجود ندارد.
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

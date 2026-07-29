@@ -5,7 +5,27 @@ from django.contrib.auth.models import User
 
 import ast
 
+# forms.py (افزودن به انتهای فایل)
 
+class OrderEditForm(forms.ModelForm):
+    """فرم ویرایش سفارش برای ادمین/مدیران"""
+    class Meta:
+        model = Order
+        fields = ['customer', 'number', 'due_date', 'priority', 'status']
+        widgets = {
+            'customer': forms.Select(attrs={'class': 'form-select'}),
+            'number': forms.TextInput(attrs={'class': 'form-control'}),
+            'due_date': forms.TextInput(attrs={'class': 'form-control', 'placeholder': 'YYYY-MM-DD'}),
+            'priority': forms.Select(attrs={'class': 'form-select'}),
+            'status': forms.Select(attrs={'class': 'form-select'}),
+        }
+        labels = {
+            'customer': 'مشتری',
+            'number': 'شماره سفارش',
+            'due_date': 'تاریخ تحویل',
+            'priority': 'اولویت',
+            'status': 'وضعیت',
+        }
 
 
 class OrderForm(forms.ModelForm):
@@ -613,12 +633,14 @@ class PaintingStageForm(forms.ModelForm):
 class WorkerProfileForm(forms.ModelForm):
     class Meta:
         model = WorkerProfile
-        fields = ['user', 'stage', 'skills', 'skill_costs']
+        fields = ['user', 'stage', 'skills', 'skill_costs', 'is_available', 'excluded_products']
         widgets = {
             'user': forms.Select(attrs={'class': 'form-select'}),
             'stage': forms.Select(attrs={'class': 'form-select'}),
             'skills': forms.Textarea(attrs={'class': 'form-control', 'rows': 2, 'placeholder': '["painter","sealer"]'}),
             'skill_costs': forms.Textarea(attrs={'class': 'form-control', 'rows': 2, 'placeholder': '{"painter":3, "sealer":4}'}),
+            'is_available': forms.CheckboxInput(attrs={'class': 'form-check-input'}),
+            'excluded_products': forms.CheckboxSelectMultiple(),
         }
 
     def __init__(self, *args, **kwargs):

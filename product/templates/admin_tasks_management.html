@@ -1,0 +1,365 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block title %}مدیریت وظایف تولید{% endblock %}
+
+{% block extra_css %}
+<style>
+    .filter-bar {
+        background: #fff;
+        border: 1px solid #e2e8f0;
+        border-radius: 12px;
+        padding: 1rem;
+        margin-bottom: 1.2rem;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+    }
+    .filter-bar .form-control,
+    .filter-bar .form-select {
+        border-radius: 10px;
+        border: 1px solid #e2e8f0;
+        background: #f8fafc;
+        height: 40px;
+        font-size: 0.9rem;
+    }
+    .filter-bar .form-control:focus,
+    .filter-bar .form-select:focus {
+        background: #fff;
+        border-color: #2563eb;
+        box-shadow: 0 0 0 3px rgba(37,99,235,0.08);
+    }
+    .task-table .form-select {
+        border-radius: 8px;
+        font-size: 0.82rem;
+        padding: 0.25rem 0.5rem;
+        min-width: 140px;
+    }
+    .status-badge {
+        font-size: 0.72rem;
+        padding: 0.25rem 0.6rem;
+        border-radius: 20px;
+        white-space: nowrap;
+    }
+    .status-badge.waiting { background: #e5e9ff; color: #3140b8; }
+    .status-badge.pending { background: #fdecc8; color: #8a5a00; }
+    .status-badge.done { background: #d1f5e0; color: #0f7b41; }
+    .card-header-gradient {
+        background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
+    }
+    .section-title {
+        font-size: 1.1rem;
+        font-weight: 700;
+        margin-bottom: 1rem;
+        color: #0f172a;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h2 class="mb-0">
+            <i class="bi bi-diagram-3 text-primary"></i>
+            مدیریت وظایف تولید
+        </h2>
+        <a href="{% url 'dashboard' %}" class="btn btn-secondary">
+            <i class="bi bi-arrow-right"></i> بازگشت به داشبورد
+        </a>
+    </div>
+
+    {% if messages %}
+    {% for message in messages %}
+    <div class="alert alert-{{ message.tags }} alert-dismissible fade show" role="alert">
+        {{ message }}
+        <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+    </div>
+    {% endfor %}
+    {% endif %}
+
+    <form method="get" class="filter-bar" id="filterForm">
+        <div class="row g-2 align-items-end">
+            <div class="col-md-3">
+                <label class="form-label small text-muted">جستجو</label>
+                <input type="text" name="q" class="form-control" placeholder="شماره سفارش، قطعه، مشتری..." value="{{ search_query|default:'' }}">
+            </div>
+            <div class="col-md-2">
+                <label class="form-label small text-muted">سفارش</label>
+                <select name="order" class="form-select" onchange="document.getElementById('filterForm').submit()">
+                    <option value="">-- همه سفارشات --</option>
+                    {% for o in orders %}
+                    <option value="{{ o.id }}" {% if order_filter == o.id|stringformat:"s" %}selected{% endif %}>
+                        #{{ o.id }} - {{ o.customer.name }}
+                    </option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-md-2">
+                <label class="form-label small text-muted">ایستگاه</label>
+                <select name="station" class="form-select" onchange="document.getElementById('filterForm').submit()">
+                    <option value="">-- همه ایستگاه‌ها --</option>
+                    {% for code, name in station_choices %}
+                    <option value="{{ code }}" {% if station_filter == code %}selected{% endif %}>{{ name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-md-2">
+                <label class="form-label small text-muted">وضعیت</label>
+                <select name="status" class="form-select" onchange="document.getElementById('filterForm').submit()">
+                    <option value="">-- همه وضعیت‌ها --</option>
+                    {% for code, name in task_status_choices %}
+                    <option value="{{ code }}" {% if status_filter == code %}selected{% endif %}>{{ name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-md-2">
+                <label class="form-label small text-muted">واحد</label>
+                <select name="unit" class="form-select" onchange="document.getElementById('filterForm').submit()">
+                    <option value="">-- همه واحدها --</option>
+                    {% for u in units %}
+                    <option value="{{ u.order_item_id }}" {% if unit_filter == u.order_item_id|stringformat:"s" %}selected{% endif %}>
+                        سفارش #{{ u.order_id }} / آیتم #{{ u.order_item_id }}
+                    </option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-md-1">
+                <button type="submit" class="btn btn-primary w-100">
+                    <i class="bi bi-search"></i>
+                </button>
+            </div>
+        </div>
+    </form>
+
+    <div class="card shadow-sm border-0 mb-4">
+        <div class="card-header card-header-gradient text-white d-flex justify-content-between align-items-center py-3">
+            <h5 class="mb-0">
+                <i class="bi bi-list-ul me-2"></i>
+                لیست وظایف ({{ tasks|length }})
+            </h5>
+            <div class="d-flex gap-2">
+                <button type="button" class="btn btn-warning btn-sm" id="fixChainBtn" disabled>
+                    <i class="bi bi-wrench"></i> رفع زنجیره
+                </button>
+                <button type="button" class="btn btn-success btn-sm" id="applyBulkBtn" disabled>
+                    <i class="bi bi-check2-all"></i> اعمال عملیات گروهی
+                </button>
+            </div>
+        </div>
+        <div class="card-body p-0">
+            <form method="post" id="bulkForm">
+                {% csrf_token %}
+                <input type="hidden" name="action" value="bulk_status" id="bulkAction">
+                <div class="table-responsive">
+                    <table class="table table-hover align-middle mb-0 task-table">
+                        <thead class="table-light">
+                            <tr>
+                                <th style="width:40px">
+                                    <input type="checkbox" class="form-check-input" id="selectAllTasks">
+                                </th>
+                                <th>سفارش</th>
+                                <th>آیتم</th>
+                                <th>قطعه</th>
+                                <th>ایستگاه</th>
+                                <th>اولویت</th>
+                                <th>تعداد</th>
+                                <th>وضعیت</th>
+                                <th>کارگر</th>
+                                <th>شروع برنامه</th>
+                                <th>پایان برنامه</th>
+                                <th>عملیات سریع</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for task in tasks %}
+                            <tr class="{% if task.status == 'done' %}table-success{% elif task.status == 'pending' %}table-warning{% endif %}">
+                                <td>
+                                    <input type="checkbox" class="form-check-input task-checkbox" name="task_ids" value="{{ task.id }}">
+                                </td>
+                                <td>
+                                    <a href="{% url 'order_detail' task.order.id %}" target="_blank">
+                                        #{{ task.order.id }}
+                                    </a>
+                                </td>
+                                <td>
+                                    {% if task.order_item %}
+                                        <a href="{% url 'item_detail' task.order_item.id %}" target="_blank">
+                                            آیتم #{{ task.order_item.id }} ({{ task.order_item.product.category.name }} {{ task.order_item.product.name }})
+                                        </a>
+                                    {% else %}
+                                        {{ task.part.name|default:"-" }}
+                                    {% endif %}
+                                </td>
+                                <td>{{ task.part.name|default:"-" }}</td>
+                                <td>{{ task.get_station_name_display }}</td>
+                                <td>{{ task.step_order }}</td>
+                                <td>{{ task.quantity }}</td>
+                                <td>
+                                    <span class="badge status-badge {{ task.status }}">
+                                        {{ task.get_status_display }}
+                                    </span>
+                                </td>
+                                <td>
+                                    {% if task.assigned_worker %}
+                                        {{ task.assigned_worker.get_full_name|default:task.assigned_worker.username }}
+                                    {% else %}
+                                        <span class="text-muted">—</span>
+                                    {% endif %}
+                                </td>
+                                <td><small>{{ task.scheduled_start|date:"Y/m/d H:i"|default:"-" }}</small></td>
+                                <td><small>{{ task.scheduled_end|date:"Y/m/d H:i"|default:"-" }}</small></td>
+                                <td>
+                                    <form method="post" class="d-inline" style="display:inline;">
+                                        {% csrf_token %}
+                                        <input type="hidden" name="task_id" value="{{ task.id }}">
+                                        <select name="status" class="form-select" onchange="this.form.submit()">
+                                            <option value="">تغییر وضعیت</option>
+                                            <option value="waiting">در انتظار</option>
+                                            <option value="pending">آماده</option>
+                                            <option value="done">انجام شده</option>
+                                        </select>
+                                    </form>
+                                </td>
+                            </tr>
+                            {% empty %}
+                            <tr>
+                                <td colspan="12" class="text-center py-5 text-muted">
+                                    <i class="bi bi-inbox fs-1 d-block mb-2"></i>
+                                    هیچ وظیفه‌ای با فیلترهای انتخاب‌شده یافت نشد.
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <div class="card shadow-sm border-0" id="bulkActionsCard" style="display:none;">
+        <div class="card-header bg-dark text-white py-2">
+            <h6 class="mb-0">عملیات گروهی</h6>
+        </div>
+        <div class="card-body">
+            <div class="row g-2 align-items-end">
+                <div class="col-md-3">
+                    <label class="form-label small text-muted">تغییر وضعیت گروهی</label>
+                    <select class="form-select" id="bulkStatusSelect">
+                        <option value="">-- انتخاب وضعیت --</option>
+                        {% for code, name in task_status_choices %}
+                        <option value="{{ code }}">{{ name }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label small text-muted">تخصیص کارگر گروهی</label>
+                    <select class="form-select" id="bulkWorkerSelect">
+                        <option value="">-- انتخاب کارگر --</option>
+                        {% for u in users %}
+                        <option value="{{ u.id }}">{{ u.get_full_name|default:u.username }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label small text-muted">عملیات</label>
+                    <select class="form-select" id="bulkActionSelect">
+                        <option value="">-- انتخاب عملیات --</option>
+                        <option value="fix_chain">رفع زنجیره وظایف</option>
+                        <option value="bulk_delete">حذف وظایف انتخاب شده</option>
+                    </select>
+                </div>
+                <div class="col-md-3">
+                    <button type="button" class="btn btn-primary w-100" onclick="submitBulkAction()">
+                        <i class="bi bi-play"></i> اجرا
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+    const checkboxes = document.querySelectorAll('.task-checkbox');
+    const selectAll = document.getElementById('selectAllTasks');
+    const applyBulkBtn = document.getElementById('applyBulkBtn');
+    const fixChainBtn = document.getElementById('fixChainBtn');
+    const bulkActionsCard = document.getElementById('bulkActionsCard');
+
+    function updateBulkUI() {
+        const checked = document.querySelectorAll('.task-checkbox:checked');
+        if (checked.length > 0) {
+            applyBulkBtn.disabled = false;
+            fixChainBtn.disabled = false;
+            bulkActionsCard.style.display = 'block';
+        } else {
+            applyBulkBtn.disabled = true;
+            fixChainBtn.disabled = true;
+            bulkActionsCard.style.display = 'none';
+        }
+    }
+
+    selectAll.addEventListener('change', function () {
+        checkboxes.forEach(function (cb) {
+            cb.checked = selectAll.checked;
+        });
+        updateBulkUI();
+    });
+
+    checkboxes.forEach(function (cb) {
+        cb.addEventListener('change', updateBulkUI);
+    });
+
+    fixChainBtn.addEventListener('click', submitFixChain);
+    applyBulkBtn.addEventListener('click', submitBulkAction);
+
+    updateBulkUI();
+});
+
+function submitBulkAction() {
+    const action = document.getElementById('bulkActionSelect').value;
+    if (!action) {
+        alert('لطفاً یک عملیات انتخاب کنید.');
+        return;
+    }
+
+    const checked = document.querySelectorAll('.task-checkbox:checked');
+    if (checked.length === 0) {
+        alert('هیچ وظیفه‌ای انتخاب نشده است.');
+        return;
+    }
+
+    if (action === 'fix_chain') {
+        const form = document.getElementById('bulkForm');
+        document.getElementById('bulkAction').value = 'fix_chain';
+        form.submit();
+        return;
+    }
+
+    const status = document.getElementById('bulkStatusSelect').value;
+    const worker = document.getElementById('bulkWorkerSelect').value;
+
+    if (action === 'bulk_status' && !status) {
+        alert('لطفاً وضعیت را انتخاب کنید.');
+        return;
+    }
+    if (action === 'bulk_worker' && !worker) {
+        alert('لطفاً کارگر را انتخاب کنید.');
+        return;
+    }
+
+    const form = document.getElementById('bulkForm');
+    document.getElementById('bulkAction').value = action;
+    form.submit();
+}
+
+function submitFixChain() {
+    const checked = document.querySelectorAll('.task-checkbox:checked');
+    if (checked.length === 0) {
+        alert('هیچ وظیفه‌ای انتخاب نشده است.');
+        return;
+    }
+    const form = document.getElementById('bulkForm');
+    document.getElementById('bulkAction').value = 'fix_chain';
+    form.submit();
+}
+</script>
+{% endblock %}

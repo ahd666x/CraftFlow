@@ -1,160 +1,1033 @@
 {% extends "painting_management/base.html" %}
+{% load static %}
+{% load worker_filters %}
+
 {% block title %}مدیریت کارگران نقاشی{% endblock %}
 
-{% block painting_content %}
-<div class="d-flex justify-content-between align-items-center mb-4">
-        <h2>👷 مدیریت کارگران نقاشی</h2>
-        <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#workerModal">
-            <i class="bi bi-plus-circle"></i> کارگر جدید
-        </button>
-    </div>
+{% block extra_css %}
+<link href="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/css/select2.min.css" rel="stylesheet" />
+<link href="https://cdn.jsdelivr.net/npm/select2-bootstrap-5-theme@1.3.0/dist/select2-bootstrap-5-theme.min.css" rel="stylesheet" />
+<style>
+    .worker-table th { white-space: nowrap; font-size: 0.85rem; }
+    .worker-table td { vertical-align: middle; font-size: 0.9rem; }
+    .skill-badge { font-size: 0.75rem; padding: 0.2rem 0.6rem; border-radius: 20px; margin: 1px 2px; }
+    .action-dropdown .dropdown-toggle::after { display: none; }
+    .action-dropdown .dropdown-toggle { background: transparent; border: none; padding: 0 8px; font-size: 1.2rem; color: #6c757d; }
+    .action-dropdown .dropdown-toggle:hover { color: #0d6efd; }
+    .filter-section { background: #f8f9fa; border-radius: 10px; padding: 1rem; margin-bottom: 1.5rem; }
+    .toast-container { position: fixed; top: 20px; left: 20px; z-index: 1055; }
+    .cost-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 0.8rem; padding: 0.5rem 0; }
+    .cost-grid .form-group { display: flex; align-items: center; gap: 0.5rem; background: #f8f9fa; padding: 0.3rem 0.8rem; border-radius: 8px; }
+    .cost-grid .form-group label { margin: 0; font-weight: 500; font-size: 0.9rem; min-width: 60px; }
+    .cost-grid .form-group input { width: 70px; text-align: center; }
+    .skill-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 0.5rem; padding: 0.5rem 0; }
+    .loading-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(255,255,255,0.7); z-index: 9999; display: none; justify-content: center; align-items: center; }
+    .loading-overlay.show { display: flex; }
+    select:disabled { opacity: 0.6; cursor: not-allowed; background-color: #e9ecef; }
+    .product-option-category { font-size: 0.8rem; color: #6c757d; }
+    .product-option-name { font-weight: 500; }
+    @media (max-width: 768px) { .cost-grid { grid-template-columns: 1fr; } .skill-grid { grid-template-columns: 1fr 1fr; } .worker-table td, .worker-table th { font-size: 0.8rem; padding: 0.3rem; } }
+</style>
+{% endblock %}
 
-    <!-- فیلتر و جستجو -->
-    <div class="row mb-3">
-        <div class="col-md-6">
-            <form method="get" class="d-flex">
-                <input type="text" name="search" class="form-control me-2" placeholder="جستجو..." value="{{ search }}">
-                <button type="submit" class="btn btn-outline-secondary">جستجو</button>
-            </form>
+{% block painting_content %}
+<div class="container-fluid">
+
+    <!-- ======== هدر ======== -->
+    <div class="d-flex flex-wrap justify-content-between align-items-center mb-4">
+        <h2 class="mb-2 mb-md-0">👷 مدیریت کارگران نقاشی</h2>
+        <div>
+            <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#workerModal" id="btnAddWorker">
+                <i class="bi bi-plus-circle"></i> کارگر جدید
+            </button>
+            <a href="{% url 'painting_workers' %}" class="btn btn-outline-secondary">
+                <i class="bi bi-arrow-repeat"></i>
+            </a>
         </div>
     </div>
 
+    <!-- ======== فیلتر و جستجو ======== -->
+    {% comment %} <div class="filter-section">
+        <form id="filterForm" class="row g-3 align-items-end">
+            <div class="col-md-4">
+                <label class="form-label small">جستجو</label>
+                <div class="input-group">
+                    <span class="input-group-text"><i class="bi bi-search"></i></span>
+                    <input type="text" name="search" class="form-control" placeholder="نام یا نام کاربری..." value="{{ search }}">
+                </div>
+            </div>
+            <div class="col-md-3">
+                <label class="form-label small">وضعیت</label>
+                <select name="status" class="form-select" id="filterStatus">
+                    <option value="">همه</option>
+                    <option value="active" {% if status == 'active' %}selected{% endif %}>فعال</option>
+                    <option value="inactive" {% if status == 'inactive' %}selected{% endif %}>غیرفعال</option>
+                </select>
+            </div>
+            <div class="col-md-3">
+                <label class="form-label small">مهارت</label>
+                <select name="skill" class="form-select" id="filterSkill">
+                    <option value="">همه</option>
+                    {% for value, label in skill_choices %}
+                    <option value="{{ value }}" {% if skill_filter == value %}selected{% endif %}>{{ label }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-md-2">
+                <button type="submit" class="btn btn-primary w-100">فیلتر</button>
+            </div>
+        </form>
+    </div> {% endcomment %}
+
+    <!-- ======== جدول کارگران ======== -->
     <div class="table-responsive">
-        <table class="table table-hover">
-            <thead>
+        <table class="table table-hover worker-table" id="workerTable">
+            <thead class="table-light">
                 <tr>
                     <th>نام کاربری</th>
-                    <th>ایستگاه</th>
+                    <th>واحد</th>
                     <th>مهارت‌ها</th>
-                    <th>هزینه‌های ترجیحی</th>
-                    <th>تسک‌های فعال</th>
+                    <th>اولویت</th>
+                    <th>وضعیت</th>
+                    <th>محصولات ممنوع</th>
+                    <th>سفارش‌های ممنوع</th>
+                    <th>برنامه‌ریزی فعال</th>
                     <th>عملیات</th>
                 </tr>
             </thead>
-            <tbody>
+            <tbody id="workerTableBody">
                 {% for worker in workers %}
-                <tr data-id="{{ worker.id }}">
+                <tr id="worker-row-{{ worker.id }}" data-worker-id="{{ worker.id }}">
                     <td>{{ worker.user.get_full_name|default:worker.user.username }}</td>
                     <td>{{ worker.get_stage_display }}</td>
                     <td>
                         {% for skill in worker.skills %}
-                            <span class="badge bg-info">{{ skill }}</span>
-                        {% empty %}-{% endfor %}
+                        <span class="badge bg-info skill-badge">{{ skill }}</span>
+                        {% empty %}
+                        <span class="text-muted">-</span>
+                        {% endfor %}
                     </td>
-                    <td><code>{{ worker.skill_costs }}</code></td>
+                    <td>
+                        {% if worker.skill_costs %}
+                        <code class="small">{{ worker.skill_costs|format_costs }}</code>
+                        {% else %}
+                        <span class="text-muted">-</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        <span class="badge {% if worker.is_available %}bg-success{% else %}bg-secondary{% endif %} rounded-pill">
+                            {% if worker.is_available %}فعال{% else %}غیرفعال{% endif %}
+                        </span>
+                    </td>
+                    <td>
+                        <span class="badge bg-warning text-dark rounded-pill" id="product-count-{{ worker.id }}">
+                            {{ worker.excluded_products.count }}
+                        </span>
+                        <button class="btn btn-sm btn-outline-warning ms-1 btn-exclusion"
+                                data-worker-id="{{ worker.id }}"
+                                data-type="products"
+                                title="مدیریت محصولات ممنوع">
+                            <i class="bi bi-slash-circle"></i>
+                        </button>
+                    </td>
+                    <td>
+                        <span class="badge bg-danger rounded-pill" id="item-count-{{ worker.id }}">
+                            {{ worker.excluded_items.count }}
+                        </span>
+                        <button class="btn btn-sm btn-outline-danger ms-1 btn-exclusion"
+                                data-worker-id="{{ worker.id }}"
+                                data-type="items"
+                                title="مدیریت آیتم‌های ممنوع">
+                            <i class="bi bi-ban"></i>
+                        </button>
+                    </td>
                     <td>{{ worker.active_tasks }}</td>
                     <td>
-                        <button class="btn btn-sm btn-outline-primary edit-worker" data-id="{{ worker.id }}">
-                            <i class="bi bi-pencil"></i>
-                        </button>
-                        <button class="btn btn-sm btn-outline-danger delete-worker" data-id="{{ worker.id }}">
-                            <i class="bi bi-trash"></i>
-                        </button>
+                        <div class="dropdown action-dropdown">
+                            <button class="dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false">
+                                <i class="bi bi-three-dots-vertical"></i>
+                            </button>
+                            <ul class="dropdown-menu dropdown-menu-end">
+                                <li>
+                                    <a class="dropdown-item btn-edit-worker" href="#" data-worker-id="{{ worker.id }}">
+                                        <i class="bi bi-pencil me-2"></i>ویرایش
+                                    </a>
+                                </li>
+                                <li>
+                                    <a class="dropdown-item btn-delete-worker" href="#" data-worker-id="{{ worker.id }}">
+                                        <i class="bi bi-trash me-2"></i>حذف
+                                    </a>
+                                </li>
+                                {% comment %} <li><hr class="dropdown-divider"></li> {% endcomment %}
+                                {% comment %} <li>
+                                    <a class="dropdown-item" href="{% url 'painting_worker_excluded_items' worker.id %}">
+                                        <i class="bi bi-eye me-2"></i>مشاهده ممنوعیت‌ها
+                                    </a>
+                                </li> {% endcomment %}
+                            </ul>
+                        </div>
                     </td>
                 </tr>
                 {% empty %}
-                <tr><td colspan="6" class="text-center">هیچ کارگری یافت نشد</td></tr>
+                <tr>
+                    <td colspan="9" class="text-center py-4 text-muted">
+                        <i class="bi bi-people fs-2 d-block mb-2"></i>
+                        هیچ کارگری یافت نشد.
+                    </td>
+                </tr>
                 {% endfor %}
             </tbody>
         </table>
     </div>
 
-    <!-- صفحه‌بندی -->
-    {% if workers.has_other_pages %}
-    <nav>
-        <ul class="pagination justify-content-center">
-            {% if workers.has_previous %}
-            <li class="page-item"><a class="page-link" href="?page=1">&laquo;</a></li>
-            <li class="page-item"><a class="page-link" href="?page={{ workers.previous_page_number }}">قبلی</a></li>
-            {% endif %}
-            <li class="page-item active"><span class="page-link">{{ workers.number }}</span></li>
-            {% if workers.has_next %}
-            <li class="page-item"><a class="page-link" href="?page={{ workers.next_page_number }}">بعدی</a></li>
-            <li class="page-item"><a class="page-link" href="?page={{ workers.paginator.num_pages }}">&raquo;</a></li>
-            {% endif %}
-        </ul>
-    </nav>
-    {% endif %}
+    <!-- ======== صفحه‌بندی ======== -->
+    <div id="paginationContainer" class="mt-3">
+        {% if workers.has_other_pages %}
+        <nav aria-label="Page navigation">
+            <ul class="pagination justify-content-center">
+                {% if workers.has_previous %}
+                <li class="page-item">
+                    <a class="page-link" href="#" data-page="{{ workers.previous_page_number }}">&laquo;</a>
+                </li>
+                {% endif %}
+
+                {% for num in workers.paginator.page_range %}
+                    {% if workers.number == num %}
+                    <li class="page-item active"><span class="page-link">{{ num }}</span></li>
+                    {% elif num > workers.number|add:'-3' and num < workers.number|add:'3' %}
+                    <li class="page-item">
+                        <a class="page-link" href="#" data-page="{{ num }}">{{ num }}</a>
+                    </li>
+                    {% endif %}
+                {% endfor %}
+
+                {% if workers.has_next %}
+                <li class="page-item">
+                    <a class="page-link" href="#" data-page="{{ workers.next_page_number }}">&raquo;</a>
+                </li>
+                {% endif %}
+            </ul>
+        </nav>
+        {% endif %}
+    </div>
 </div>
 
-<!-- مودال ایجاد/ویرایش -->
-<div class="modal fade" id="workerModal" tabindex="-1">
-    <div class="modal-dialog">
+<!-- ============================================================ -->
+<!-- مودال ایجاد/ویرایش کارگر                                     -->
+<!-- ============================================================ -->
+<div class="modal fade" id="workerModal" tabindex="-1" data-bs-backdrop="static">
+    <div class="modal-dialog modal-lg">
         <div class="modal-content">
-            <form id="workerForm" method="post" action="{% url 'painting_workers' %}">
+            <form id="workerForm">
                 {% csrf_token %}
-                <input type="hidden" name="action" id="workerAction" value="create">
                 <input type="hidden" name="worker_id" id="workerId">
                 <div class="modal-header">
                     <h5 class="modal-title" id="workerModalTitle">کارگر جدید</h5>
                     <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
                 </div>
                 <div class="modal-body">
-                    {{ form.as_p }}
+                    <div class="mb-3">
+                        <label for="id_user" class="form-label">کاربر <span class="text-danger">*</span></label>
+                        <select name="user" id="id_user" class="form-select" required>
+                            <option value="">---------</option>
+                            {% for user in user_list %}
+                            <option value="{{ user.id }}">{{ user.username }}</option>
+                            {% endfor %}
+                        </select>
+                        <div class="form-text" id="userHelpText">در هنگام ویرایش، کاربر قابل تغییر نیست.</div>
+                    </div>
+                    <div class="mb-3">
+                        <label for="id_stage" class="form-label">واحد</label>
+                        <select name="stage" id="id_stage" class="form-select">
+                            <option value="paint" selected>نقاشی</option>
+                        </select>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">مهارت‌ها</label>
+                        <div class="skill-grid" id="skillGrid">
+                            {% for value, label in skill_choices %}
+                            <div class="form-check">
+                                <input class="form-check-input skill-checkbox" type="checkbox"
+                                       name="skills_list" value="{{ value }}" id="skill_{{ value }}">
+                                <label class="form-check-label" for="skill_{{ value }}">{{ label }}</label>
+                            </div>
+                            {% endfor %}
+                        </div>
+                        <div class="form-text">حداقل یک مهارت انتخاب کنید.</div>
+                        <input type="hidden" name="skills" id="id_skills" value="[]">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">اولویت مهارت‌ها (۰ تا ۱۰)</label>
+                        <div class="cost-grid" id="costGrid">
+                            {% for value, label in skill_choices %}
+                            <div class="form-group">
+                                <label for="cost_{{ value }}">{{ label }}</label>
+                                <input type="number" class="form-control form-control-sm cost-input"
+                                       id="cost_{{ value }}" name="cost_{{ value }}"
+                                       min="0" max="10" step="1" value="0">
+                            </div>
+                            {% endfor %}
+                        </div>
+                        <div class="form-text">عدد بزرگ‌تر = اولویت بالاتر</div>
+                        <input type="hidden" name="skill_costs" id="id_skill_costs" value="{}">
+                    </div>
+                    <div class="mb-3 form-check">
+                        <input type="checkbox" name="is_available" id="id_is_available" class="form-check-input" checked>
+                        <label for="id_is_available" class="form-check-label">فعال برای زمان‌بندی</label>
+                    </div>
                 </div>
                 <div class="modal-footer">
                     <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">انصراف</button>
-                    <button type="submit" class="btn btn-primary">ذخیره</button>
+                    <button type="submit" class="btn btn-primary" id="workerSubmitBtn">ذخیره</button>
                 </div>
             </form>
         </div>
     </div>
 </div>
 
-<!-- نمایش راهنمای مهارت‌ها -->
-<div class="container-fluid">
-    <div class="text-muted small">
-        مهارت‌های معتبر:
-        {% for value, label in skill_choices %}<code>{{ value }}</code> ({{ label }}){% if not forloop.last %}، {% endif %}{% endfor %}
+<!-- ============================================================ -->
+<!-- مودال مدیریت ممنوعیت‌ها (محصولات و آیتم‌ها)                  -->
+<!-- ============================================================ -->
+<div class="modal fade" id="exclusionModal" tabindex="-1" data-bs-backdrop="static">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <form id="exclusionForm">
+                {% csrf_token %}
+                <input type="hidden" name="exclusion_type" id="exclusionType" value="products">
+                <input type="hidden" name="worker_id" id="exclusionWorkerId">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="exclusionModalTitle">مدیریت محصولات ممنوع</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label class="form-label" id="exclusionLabel">محصولات ممنوع:</label>
+                        <select name="excluded_items" class="form-select select2-ajax" multiple id="exclusionSelect">
+                        </select>
+                        <div class="form-text" id="exclusionHelp">محصولات انتخاب‌شده را کارگر در زمان‌بندی نمی‌بیند.</div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">انصراف</button>
+                    <button type="submit" class="btn btn-warning" id="exclusionSubmitBtn">ذخیره</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- ============================================================ -->
+<!-- مودال تأیید حذف                                             -->
+<!-- ============================================================ -->
+<div class="modal fade" id="deleteModal" tabindex="-1" data-bs-backdrop="static">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header bg-danger text-white">
+                <h5 class="modal-title">تأیید حذف</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <p>آیا از حذف این کارگر اطمینان دارید؟ این عملیات غیرقابل بازگشت است.</p>
+                <p class="text-muted small" id="deleteWorkerName"></p>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">انصراف</button>
+                <button type="button" class="btn btn-danger" id="confirmDeleteBtn">حذف</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- ============================================================ -->
+<!-- Toast برای اعلان‌ها                                         -->
+<!-- ============================================================ -->
+<div class="toast-container">
+    <div id="mainToast" class="toast align-items-center border-0" role="alert" aria-live="assertive" aria-atomic="true">
+        <div class="d-flex">
+            <div class="toast-body" id="toastMessage"></div>
+            <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast"></button>
+        </div>
+    </div>
+</div>
+
+<!-- ============================================================ -->
+<!-- لودینگ اوورلی                                              -->
+<!-- ============================================================ -->
+<div class="loading-overlay" id="loadingOverlay">
+    <div class="spinner-border text-primary" style="width: 3rem; height: 3rem;" role="status">
+        <span class="visually-hidden">در حال پردازش...</span>
     </div>
 </div>
 {% endblock %}
 
 {% block painting_js %}
+<script src="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/js/select2.min.js"></script>
 <script>
-$(function () {
-    $('#workerForm').on('submit', function (e) {
-        e.preventDefault();
-        var $form = $(this);
-        $.ajax({
-            url: $form.attr('action'),
-            method: 'POST',
-            headers: {'X-Requested-With': 'XMLHttpRequest'},
-            data: $form.serialize(),
-            success: function (data) {
-                if (data.success) { location.reload(); }
-                else { alert('خطا: ' + JSON.stringify(data.errors || data)); }
-            },
-            error: function () { alert('خطای ارتباط با سرور'); }
+(function() {
+    'use strict';
+
+    // ============================================================
+    // 1. تعریف URLها
+    // ============================================================
+    const WORKERS_BASE = "{% url 'painting_workers_api' %}";
+    const SEARCH_PRODUCTS_URL = "{% url 'search_products_api' %}";
+    const SEARCH_ITEMS_URL = "{% url 'search_items_api' %}";
+
+    function getWorkerDetailUrl(workerId) {
+        return WORKERS_BASE + workerId + '/';
+    }
+    function getExcludedProductsUrl(workerId) {
+        return WORKERS_BASE + workerId + '/excluded-products/';
+    }
+    function getExcludedItemsUrl(workerId) {
+        return WORKERS_BASE + workerId + '/excluded-items/';
+    }
+
+    // ============================================================
+    // 2. ابزارها (Utilities)
+    // ============================================================
+    const Utils = {
+        getCsrfToken: function() {
+            let cookieValue = null;
+            const name = 'csrftoken';
+            if (document.cookie && document.cookie !== '') {
+                const cookies = document.cookie.split(';');
+                for (let i = 0; i < cookies.length; i++) {
+                    const cookie = cookies[i].trim();
+                    if (cookie.substring(0, name.length + 1) === (name + '=')) {
+                        cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+                        break;
+                    }
+                }
+            }
+            return cookieValue;
+        },
+
+        safeJson: function(value, fallback) {
+            if (value === null || value === undefined) return fallback;
+            if (typeof value === 'object') return value;
+            try {
+                const parsed = JSON.parse(value);
+                return (parsed !== null && parsed !== undefined) ? parsed : fallback;
+            } catch {
+                return fallback;
+            }
+        },
+
+        showToast: function(message, type) {
+            type = type || 'success';
+            const toastEl = document.getElementById('mainToast');
+            const toastBody = document.getElementById('toastMessage');
+            if (!toastEl || !toastBody) return;
+            toastBody.textContent = message;
+            const colors = {
+                success: 'bg-success text-white',
+                error: 'bg-danger text-white',
+                warning: 'bg-warning text-dark',
+                info: 'bg-info text-white'
+            };
+            toastEl.className = 'toast align-items-center border-0 ' + (colors[type] || colors.info);
+            if (typeof bootstrap !== 'undefined' && bootstrap.Toast) {
+                const toast = new bootstrap.Toast(toastEl, { delay: 3000 });
+                toast.show();
+            } else {
+                toastEl.style.display = 'block';
+                setTimeout(function() { toastEl.style.display = 'none'; }, 3000);
+            }
+        },
+
+        showLoading: function(show) {
+            const overlay = document.getElementById('loadingOverlay');
+            if (overlay) {
+                if (show) overlay.classList.add('show');
+                else overlay.classList.remove('show');
+            }
+        },
+
+        buildUrl: function(base, path, params) {
+            let url = base;
+            if (path) {
+                if (!url.endsWith('/') && !path.startsWith('/')) url += '/';
+                url += path;
+            }
+            if (params && typeof params === 'object') {
+                const query = new URLSearchParams(params).toString();
+                if (query) {
+                    url += (url.includes('?') ? '&' : '?') + query;
+                }
+            }
+            return url;
+        },
+
+        ajax: function(url, method, data, successCallback, errorCallback) {
+            Utils.showLoading(true);
+
+            const options = {
+                method: method.toUpperCase(),
+                headers: {
+                    'X-Requested-With': 'XMLHttpRequest',
+                    'X-CSRFToken': Utils.getCsrfToken()
+                }
+            };
+
+            const methodUpper = method.toUpperCase();
+
+            if (methodUpper === 'GET') {
+                if (data && typeof data === 'object') {
+                    const params = new URLSearchParams(data);
+                    const qs = params.toString();
+                    if (qs) {
+                        url += (url.includes('?') ? '&' : '?') + qs;
+                    }
+                }
+            } else {
+                if (data instanceof FormData) {
+                    options.body = data;
+                } else if (data && typeof data === 'object') {
+                    options.headers['Content-Type'] = 'application/json';
+                    options.body = JSON.stringify(data);
+                }
+            }
+
+            fetch(url, options)
+                .then(function(response) {
+                    Utils.showLoading(false);
+                    const contentType = response.headers.get('content-type');
+                    if (!contentType || !contentType.includes('application/json')) {
+                        return response.text().then(function(text) {
+                            throw new Error('پاسخ سرور معتبر نیست (JSON expected)');
+                        });
+                    }
+                    return response.json();
+                })
+                .then(function(data) {
+                    if (data.success) {
+                        if (successCallback) successCallback(data);
+                    } else {
+                        Utils.showToast(data.error || 'خطا در انجام عملیات', 'error');
+                        if (errorCallback) errorCallback(data);
+                    }
+                })
+                .catch(function(error) {
+                    Utils.showLoading(false);
+                    Utils.showToast(error.message || 'خطای ارتباط با سرور', 'error');
+                    if (errorCallback) errorCallback(error);
+                });
+        }
+    };
+
+    // ============================================================
+    // 3. مدیریت جدول (TableManager)
+    // ============================================================
+    var TableManager = {
+        updateRow: function(workerData) {
+            var row = document.getElementById('worker-row-' + workerData.id);
+            if (!row) return;
+            var cells = row.querySelectorAll('td');
+            if (cells.length < 8) return;
+
+            cells[0].textContent = workerData.username || '';
+            cells[1].textContent = workerData.stage_label || '';
+
+            var skills = workerData.skills || [];
+            cells[2].innerHTML = skills.length ?
+                skills.map(function(s) {
+                    return '<span class="badge bg-info skill-badge">' + Utils.safeJson(s, '') + '</span>';
+                }).join(' ') :
+                '<span class="text-muted">-</span>';
+
+            var costs = workerData.skill_costs || {};
+            cells[3].innerHTML = Object.keys(costs).length ?
+                '<code class="small">' + JSON.stringify(costs) + '</code>' :
+                '<span class="text-muted">-</span>';
+
+            var isActive = workerData.is_available === true;
+            cells[4].innerHTML = '<span class="badge ' + (isActive ? 'bg-success' : 'bg-secondary') + ' rounded-pill">' +
+                (isActive ? 'فعال' : 'غیرفعال') + '</span>';
+
+            var prodCount = document.getElementById('product-count-' + workerData.id);
+            if (prodCount) prodCount.textContent = workerData.excluded_products_count || 0;
+
+            var itemCount = document.getElementById('item-count-' + workerData.id);
+            if (itemCount) itemCount.textContent = workerData.excluded_items_count || 0;
+
+            cells[7].textContent = workerData.active_tasks || 0;
+        },
+
+        addRow: function(workerData) {
+            var tbody = document.getElementById('workerTableBody');
+            if (!tbody) return;
+
+            var emptyRow = tbody.querySelector('tr td[colspan]');
+            if (emptyRow) {
+                tbody.innerHTML = '';
+            }
+
+            var tr = document.createElement('tr');
+            tr.id = 'worker-row-' + workerData.id;
+            tr.setAttribute('data-worker-id', workerData.id);
+
+            var username = Utils.safeJson(workerData.username, '');
+            var stageLabel = Utils.safeJson(workerData.stage_label, '');
+            var skills = workerData.skills || [];
+            var costs = workerData.skill_costs || {};
+            var isActive = workerData.is_available === true;
+
+            tr.innerHTML =
+                '<td>' + username + '</td>' +
+                '<td>' + stageLabel + '</td>' +
+                '<td>' + (skills.length ? skills.map(function(s) {
+                    return '<span class="badge bg-info skill-badge">' + Utils.safeJson(s, '') + '</span>';
+                }).join(' ') : '<span class="text-muted">-</span>') + '</td>' +
+                '<td>' + (Object.keys(costs).length ? '<code class="small">' + JSON.stringify(costs) + '</code>' : '<span class="text-muted">-</span>') + '</td>' +
+                '<td><span class="badge ' + (isActive ? 'bg-success' : 'bg-secondary') + ' rounded-pill">' + (isActive ? 'فعال' : 'غیرفعال') + '</span></td>' +
+                '<td><span class="badge bg-warning text-dark rounded-pill" id="product-count-' + workerData.id + '">0</span> ' +
+                '<button class="btn btn-sm btn-outline-warning ms-1 btn-exclusion" data-worker-id="' + workerData.id + '" data-type="products" title="مدیریت محصولات ممنوع"><i class="bi bi-slash-circle"></i></button></td>' +
+                '<td><span class="badge bg-danger rounded-pill" id="item-count-' + workerData.id + '">0</span> ' +
+                '<button class="btn btn-sm btn-outline-danger ms-1 btn-exclusion" data-worker-id="' + workerData.id + '" data-type="items" title="مدیریت آیتم‌های ممنوع"><i class="bi bi-ban"></i></button></td>' +
+                '<td>0</td>' +
+                '<td><div class="dropdown action-dropdown"><button class="dropdown-toggle" type="button" data-bs-toggle="dropdown"><i class="bi bi-three-dots-vertical"></i></button>' +
+                '<ul class="dropdown-menu dropdown-menu-end">' +
+                '<li><a class="dropdown-item btn-edit-worker" href="#" data-worker-id="' + workerData.id + '"><i class="bi bi-pencil me-2"></i>ویرایش</a></li>' +
+                '<li><a class="dropdown-item btn-delete-worker" href="#" data-worker-id="' + workerData.id + '"><i class="bi bi-trash me-2"></i>حذف</a></li>' +
+                '<li><hr class="dropdown-divider"></li>' +
+                '<li><a class="dropdown-item" href="/painting/workers/' + workerData.id + '/excluded-items/"><i class="bi bi-eye me-2"></i>مشاهده ممنوعیت‌ها</a></li>' +
+                '</ul></div></td>';
+
+            tbody.appendChild(tr);
+            this.bindRowEvents(tr);
+        },
+
+        bindRowEvents: function(row) {
+            row.querySelectorAll('.btn-edit-worker').forEach(function(btn) {
+                btn.addEventListener('click', function(e) {
+                    e.preventDefault();
+                    WorkerModal.openEdit(this.dataset.workerId);
+                });
+            });
+            row.querySelectorAll('.btn-delete-worker').forEach(function(btn) {
+                btn.addEventListener('click', function(e) {
+                    e.preventDefault();
+                    DeleteModal.open(this.dataset.workerId);
+                });
+            });
+        },
+
+        removeRow: function(workerId) {
+            var row = document.getElementById('worker-row-' + workerId);
+            if (row) row.remove();
+            var tbody = document.getElementById('workerTableBody');
+            if (tbody && tbody.children.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="9" class="text-center py-4 text-muted">' +
+                    '<i class="bi bi-people fs-2 d-block mb-2"></i>' +
+                    'هیچ کارگری یافت نشد.</td></tr>';
+            }
+        },
+
+        updatePagination: function(html) {
+            var container = document.getElementById('paginationContainer');
+            if (!container) return;
+            container.innerHTML = html;
+            container.querySelectorAll('.page-link[data-page]').forEach(function(link) {
+                link.addEventListener('click', function(e) {
+                    e.preventDefault();
+                    var page = this.dataset.page;
+                    if (page) applyFilters(page);
+                });
+            });
+        }
+    };
+
+    // ============================================================
+    // 4. مدیریت مودال کارگر (WorkerModal)
+    // ============================================================
+    var WorkerModal = {
+        form: document.getElementById('workerForm'),
+        modal: null,
+        isEdit: false,
+        editUserId: null,
+
+        init: function() {
+            this.modal = new bootstrap.Modal(document.getElementById('workerModal'));
+
+            document.querySelectorAll('.skill-checkbox').forEach(function(cb) {
+                cb.addEventListener('change', function() { WorkerModal.updateJsonFields(); });
+            });
+            document.querySelectorAll('.cost-input').forEach(function(inp) {
+                inp.addEventListener('input', function() { WorkerModal.updateJsonFields(); });
+            });
+
+            this.form.addEventListener('submit', function(e) {
+                e.preventDefault();
+                WorkerModal.updateJsonFields();
+                WorkerModal.submit();
+            });
+
+            document.getElementById('btnAddWorker').addEventListener('click', function() {
+                WorkerModal.openCreate();
+            });
+        },
+
+        updateJsonFields: function() {
+            var skills = [];
+            document.querySelectorAll('.skill-checkbox:checked').forEach(function(cb) {
+                skills.push(cb.value);
+            });
+            document.getElementById('id_skills').value = JSON.stringify(skills);
+
+            var costs = {};
+            document.querySelectorAll('.cost-input').forEach(function(inp) {
+                var skill = inp.name.replace('cost_', '');
+                var val = parseInt(inp.value) || 0;
+                if (val > 0) costs[skill] = val;
+            });
+            document.getElementById('id_skill_costs').value = JSON.stringify(costs);
+        },
+
+        openCreate: function() {
+            this.isEdit = false;
+            this.editUserId = null;
+            document.getElementById('workerModalTitle').textContent = 'کارگر جدید';
+            document.getElementById('workerId').value = '';
+            document.getElementById('workerSubmitBtn').textContent = 'ذخیره';
+            this.form.reset();
+            document.getElementById('id_is_available').checked = true;
+            document.querySelectorAll('.skill-checkbox').forEach(function(cb) { cb.checked = false; });
+            document.querySelectorAll('.cost-input').forEach(function(inp) { inp.value = 0; });
+            this.updateJsonFields();
+
+            var userSelect = document.getElementById('id_user');
+            userSelect.disabled = false;
+            userSelect.value = '';
+            document.getElementById('userHelpText').textContent = 'کاربر جدید را انتخاب کنید.';
+
+            this.modal.show();
+        },
+
+        openEdit: function(workerId) {
+            this.isEdit = true;
+            document.getElementById('workerModalTitle').textContent = 'ویرایش کارگر';
+            document.getElementById('workerId').value = workerId;
+            document.getElementById('workerSubmitBtn').textContent = 'به‌روزرسانی';
+
+            var url = getWorkerDetailUrl(workerId);
+            Utils.ajax(url, 'GET', null, function(data) {
+                var userId = data.user_id;
+                WorkerModal.editUserId = userId;
+
+                var userSelect = document.getElementById('id_user');
+                userSelect.disabled = true;
+                document.getElementById('userHelpText').textContent = 'کاربر فعلی (غیرقابل تغییر)';
+
+                var userIdStr = String(userId);
+                var found = false;
+                for (var i = 0; i < userSelect.options.length; i++) {
+                    if (String(userSelect.options[i].value) === userIdStr) {
+                        userSelect.value = userIdStr;
+                        found = true;
+                        break;
+                    }
+                }
+                if (!found) {
+                    var opt = document.createElement('option');
+                    opt.value = userId;
+                    opt.textContent = data.username;
+                    userSelect.appendChild(opt);
+                    userSelect.value = userId;
+                }
+
+                document.getElementById('id_stage').value = data.stage || 'paint';
+                document.getElementById('id_is_available').checked = data.is_available === true;
+
+                var skills = data.skills || [];
+                document.querySelectorAll('.skill-checkbox').forEach(function(cb) {
+                    cb.checked = skills.indexOf(cb.value) !== -1;
+                });
+
+                var costs = data.skill_costs || {};
+                document.querySelectorAll('.cost-input').forEach(function(inp) {
+                    var skill = inp.name.replace('cost_', '');
+                    inp.value = costs[skill] || 0;
+                });
+
+                WorkerModal.updateJsonFields();
+                WorkerModal.modal.show();
+            }, function() {
+                Utils.showToast('خطا در دریافت اطلاعات کارگر', 'error');
+            });
+        },
+
+        submit: function() {
+            var workerId = document.getElementById('workerId').value;
+            var method = this.isEdit ? 'PUT' : 'POST';
+            var url = this.isEdit ? getWorkerDetailUrl(workerId) : WORKERS_BASE;
+
+            var formData = new FormData(this.form);
+            var userId;
+            if (this.isEdit) {
+                userId = this.editUserId;
+            } else {
+                var rawUserId = formData.get('user');
+                userId = rawUserId ? parseInt(rawUserId) : null;
+            }
+
+            var data = {
+                user_id: userId,
+                stage: formData.get('stage') || 'paint',
+                is_available: formData.get('is_available') === 'on',
+                skills: Utils.safeJson(formData.get('skills'), []),
+                skill_costs: Utils.safeJson(formData.get('skill_costs'), {})
+            };
+
+            if (!data.user_id) {
+                Utils.showToast('لطفاً یک کاربر انتخاب کنید', 'error');
+                return;
+            }
+
+            Utils.ajax(url, method, data, function(result) {
+                WorkerModal.modal.hide();
+                Utils.showToast(WorkerModal.isEdit ? 'کارگر به‌روزرسانی شد' : 'کارگر با موفقیت ایجاد شد', 'success');
+                if (WorkerModal.isEdit) {
+                    TableManager.updateRow(result.worker);
+                } else {
+                    TableManager.addRow(result.worker);
+                }
+            });
+        }
+    };
+
+    // ============================================================
+    // 5. مدیریت ممنوعیت‌ها (ExclusionModal)
+    // ============================================================
+    var ExclusionModal = {
+        modal: null,
+        select: null,
+        currentWorkerId: null,
+        currentType: 'products',
+
+        // تابع برای نمایش زیبای گزینه‌ها در Select2
+        formatProduct: function(item) {
+            if (!item || !item.text) return item;
+            var parts = item.text.split(' - ');
+            var category = parts[0] || '';
+            var name = parts.slice(1).join(' - ') || item.text;
+            return $('<span><span class="product-option-category">' + category + '</span> - <span class="product-option-name">' + name + '</span></span>');
+        },
+
+        init: function() {
+            this.modal = new bootstrap.Modal(document.getElementById('exclusionModal'));
+            this.select = document.getElementById('exclusionSelect');
+
+            $(this.select).select2({
+                theme: 'bootstrap-5',
+                width: '100%',
+                placeholder: 'جستجو...',
+                allowClear: true,
+                closeOnSelect: false,
+                minimumInputLength: 0,
+                templateResult: function(item) {
+                    if (!item || !item.text) return item.text;
+                    var parts = item.text.split(' - ');
+                    var category = parts[0] || '';
+                    var name = parts.slice(1).join(' - ') || item.text;
+                    if (parts.length === 1) {
+                        // اگر فقط نام بود (بدون دسته)
+                        return $('<span class="product-option-name">' + item.text + '</span>');
+                    }
+                    return $('<span><span class="product-option-category">' + category + '</span> - <span class="product-option-name">' + name + '</span></span>');
+                },
+                templateSelection: function(item) {
+                    return item.text || item.id;
+                },
+                ajax: {
+                    url: function(params) {
+                        var type = document.getElementById('exclusionType').value;
+                        return type === 'products' ? SEARCH_PRODUCTS_URL : SEARCH_ITEMS_URL;
+                    },
+                    dataType: 'json',
+                    delay: 250,
+                    data: function(params) {
+                        return { q: params.term || '' };
+                    },
+                    processResults: function(data) {
+                        return {
+                            results: data.results.map(function(item) {
+                                return { id: item.id, text: item.text };
+                            })
+                        };
+                    },
+                    cache: false
+                }
+            });
+
+            document.getElementById('exclusionForm').addEventListener('submit', function(e) {
+                e.preventDefault();
+                ExclusionModal.submit();
+            });
+
+            document.addEventListener('click', function(e) {
+                var btn = e.target.closest('.btn-exclusion');
+                if (btn) {
+                    ExclusionModal.open(btn.dataset.workerId, btn.dataset.type);
+                }
+            });
+        },
+
+        open: function(workerId, type) {
+            this.currentWorkerId = workerId;
+            this.currentType = type;
+
+            document.getElementById('exclusionWorkerId').value = workerId;
+            document.getElementById('exclusionType').value = type;
+
+            var title = type === 'products' ? 'مدیریت محصولات ممنوع' : 'مدیریت آیتم‌های ممنوع';
+            document.getElementById('exclusionModalTitle').textContent = title;
+            document.getElementById('exclusionLabel').textContent = type === 'products' ? 'محصولات ممنوع:' : 'آیتم‌های ممنوع:';
+            document.getElementById('exclusionHelp').textContent = type === 'products' ?
+                'محصولات انتخاب‌شده را کارگر در زمان‌بندی نمی‌بیند.' :
+                'کارگر روی آیتم‌های انتخاب‌شده برنامه‌ریزی نخواهد شد.';
+
+            var url = type === 'products' ?
+                getExcludedProductsUrl(workerId) :
+                getExcludedItemsUrl(workerId);
+
+            $(this.select).empty().trigger('change');
+
+            Utils.ajax(url, 'GET', null, function(data) {
+                var items = data.items || [];
+                items.forEach(function(item) {
+                    var option = new Option(item.text, item.id, true, true);
+                    $(ExclusionModal.select).append(option);
+                });
+                $(ExclusionModal.select).trigger('change');
+                ExclusionModal.modal.show();
+            });
+        },
+
+        submit: function() {
+            var type = document.getElementById('exclusionType').value;
+            var workerId = this.currentWorkerId;
+            var selected = $(this.select).val() || [];
+            var validIds = [];
+            for (var i = 0; i < selected.length; i++) {
+                var id = parseInt(selected[i]);
+                if (!isNaN(id) && id > 0) validIds.push(id);
+            }
+
+            var data = {
+                worker_id: parseInt(workerId),
+                items: validIds
+            };
+
+            var url = type === 'products' ?
+                getExcludedProductsUrl(workerId) :
+                getExcludedItemsUrl(workerId);
+
+            Utils.ajax(url, 'PUT', data, function() {
+                ExclusionModal.modal.hide();
+                Utils.showToast('ممنوعیت‌ها با موفقیت ذخیره شد', 'success');
+                var countEl = document.getElementById(type === 'products' ? 'product-count-' + workerId : 'item-count-' + workerId);
+                if (countEl) countEl.textContent = validIds.length;
+            });
+        }
+    };
+
+    // ============================================================
+    // 6. مدیریت حذف (DeleteModal)
+    // ============================================================
+    var DeleteModal = {
+        modal: null,
+        currentWorkerId: null,
+
+        init: function() {
+            this.modal = new bootstrap.Modal(document.getElementById('deleteModal'));
+            document.getElementById('confirmDeleteBtn').addEventListener('click', function() {
+                DeleteModal.confirmDelete();
+            });
+            document.addEventListener('click', function(e) {
+                var btn = e.target.closest('.btn-delete-worker');
+                if (btn) {
+                    e.preventDefault();
+                    DeleteModal.open(btn.dataset.workerId);
+                }
+            });
+        },
+
+        open: function(workerId) {
+            this.currentWorkerId = workerId;
+            var row = document.getElementById('worker-row-' + workerId);
+            var name = row ? row.querySelector('td:first-child').textContent : 'این کارگر';
+            document.getElementById('deleteWorkerName').textContent = 'کارگر: ' + name;
+            this.modal.show();
+        },
+
+        confirmDelete: function() {
+            var url = getWorkerDetailUrl(this.currentWorkerId);
+            Utils.ajax(url, 'DELETE', null, function() {
+                DeleteModal.modal.hide();
+                Utils.showToast('کارگر با موفقیت حذف شد', 'success');
+                TableManager.removeRow(DeleteModal.currentWorkerId);
+            });
+        }
+    };
+
+    // ============================================================
+    // 7. فیلتر و جستجو
+    // ============================================================
+    function applyFilters(page) {
+        page = page || 1;
+        var form = document.getElementById('filterForm');
+        var formData = new FormData(form);
+        var params = {
+            search: formData.get('search') || '',
+            status: formData.get('status') || '',
+            skill: formData.get('skill') || '',
+            page: page
+        };
+
+        var url = Utils.buildUrl(WORKERS_BASE, '', params);
+        Utils.ajax(url, 'GET', null, function(data) {
+            if (data.table_html) {
+                var tbody = document.getElementById('workerTableBody');
+                if (tbody) tbody.innerHTML = data.table_html;
+                tbody.querySelectorAll('tr[data-worker-id]').forEach(function(row) {
+                    TableManager.bindRowEvents(row);
+                });
+            }
+            if (data.pagination_html) {
+                TableManager.updatePagination(data.pagination_html);
+            }
         });
+    }
+
+    // ============================================================
+    // 8. مقداردهی اولیه
+    // ============================================================
+    document.addEventListener('DOMContentLoaded', function() {
+        WorkerModal.init();
+        ExclusionModal.init();
+        DeleteModal.init();
+
+        document.querySelectorAll('#workerTableBody tr[data-worker-id]').forEach(function(row) {
+            TableManager.bindRowEvents(row);
+        });
+
+        document.querySelectorAll('#paginationContainer .page-link[data-page]').forEach(function(link) {
+            link.addEventListener('click', function(e) {
+                e.preventDefault();
+                var page = this.dataset.page;
+                if (page) applyFilters(page);
+            });
+        });
+
+        document.getElementById('filterForm').addEventListener('submit', function(e) {
+            e.preventDefault();
+            applyFilters(1);
+        });
+
+        WorkerModal.updateJsonFields();
     });
 
-    $('.edit-worker').on('click', function () {
-        var id = $(this).data('id');
-        var $form = $('#workerForm');
-        var $row = $(this).closest('tr');
-        $('#workerModalTitle').text('ویرایش کارگر');
-        $('#workerAction').val('edit');
-        $('#workerId').val(id);
-        // مقداردهی از ردیف (برای دقت بیشتر می‌توان از یک API جزئیات استفاده کرد)
-        $form.find('[name="user"] option').filter(function () {
-            return $(this).text().trim() === $row.find('td').eq(0).text().trim();
-        }).prop('selected', true);
-        $form.find('[name="stage"]').val('paint');
-        new bootstrap.Modal(document.getElementById('workerModal')).show();
-    });
-
-    $('.delete-worker').on('click', function () {
-        if (!confirm('آیا از حذف این کارگر اطمینان دارید؟')) return;
-        var id = $(this).data('id');
-        $.ajax({
-            url: '{% url "painting_workers" %}',
-            method: 'POST',
-            headers: {'X-Requested-With': 'XMLHttpRequest'},
-            data: {'csrfmiddlewaretoken': '{{ csrf_token }}', 'action': 'delete', 'worker_id': id},
-            success: function (data) { if (data.success) location.reload(); }
-        });
-    });
-});
+})();
 </script>
 {% endblock %}

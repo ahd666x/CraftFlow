@@ -9,8 +9,8 @@
         <div class="card text-white bg-primary h-100">
             <div class="card-body">
                 <h6 class="card-title">آماده برنامه‌ریزی</h6>
-                <p class="display-6 mb-0">{{ unscheduled_ready_count }}</p>
-                <small>از {{ ready_items_count }} آیتم آماده</small>
+                <p class="display-6 mb-0">{{ unscheduled_ready_count|default:0 }}</p>
+                <small>از {{ ready_items_count|default:0 }} آیتم آماده</small>
             </div>
         </div>
     </div>
@@ -18,8 +18,8 @@
         <div class="card text-white bg-warning h-100">
             <div class="card-body">
                 <h6 class="card-title">تسک‌های در انتظار</h6>
-                <p class="display-6 mb-0">{{ pending_tasks }}</p>
-                <small>{{ unassigned_tasks }} بدون تخصیص</small>
+                <p class="display-6 mb-0">{{ pending_tasks|default:0 }}</p>
+                <small>{{ unassigned_tasks|default:0 }} بدون تخصیص</small>
             </div>
         </div>
     </div>
@@ -27,8 +27,8 @@
         <div class="card text-white bg-success h-100">
             <div class="card-body">
                 <h6 class="card-title">روندهای فعال</h6>
-                <p class="display-6 mb-0">{{ active_processes }}</p>
-                <small>از {{ total_processes }} روند</small>
+                <p class="display-6 mb-0">{{ active_processes|default:0 }}</p>
+                <small>از {{ total_processes|default:0 }} روند</small>
             </div>
         </div>
     </div>
@@ -36,8 +36,8 @@
         <div class="card text-white bg-info h-100">
             <div class="card-body">
                 <h6 class="card-title">کارگران نقاشی</h6>
-                <p class="display-6 mb-0">{{ total_workers }}</p>
-                <small>{{ total_stages }} مرحله تعریف‌شده</small>
+                <p class="display-6 mb-0">{{ total_workers|default:0 }}</p>
+                <small>{{ total_stages|default:0 }} مرحله تعریف‌شده</small>
             </div>
         </div>
     </div>
@@ -102,7 +102,15 @@
                     {% for task in recent_tasks %}
                     <tr>
                         <td>{{ task.order.id }}</td>
-                        <td>{{ task.order_item.product.name|default:task.part.name }}</td>
+                        <td>
+                            {% if task.order_item %}
+                                {{ task.order_item.product.name|default:"-" }}
+                            {% elif task.part %}
+                                {{ task.part.name }}
+                            {% else %}
+                                -
+                            {% endif %}
+                        </td>
                         <td>{{ task.painting_stage.name|default:"-" }}</td>
                         <td>{% if task.assigned_worker %}{{ task.assigned_worker.get_full_name|default:task.assigned_worker.username }}{% else %}-{% endif %}</td>
                         <td><span class="badge bg-secondary">{{ task.get_status_display }}</span></td>
