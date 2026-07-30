@@ -221,6 +221,11 @@
             <a href="{% url 'painting_workers' %}" class="nav-link {% if request.resolver_match.url_name == 'painting_workers' %}active{% endif %}">
                 <i class="bi bi-people"></i> کارگران
             </a>
+
+            <a class="nav-link {% if active_tab == 'holidays' %}active{% endif %}" href="{% url 'painting_holidays' %}">
+                <i class="bi bi-calendar-x"></i> تعطیلات
+            </a>
+
         </nav>
 
         <!-- دکمه‌های عملیاتی در سمت راست -->

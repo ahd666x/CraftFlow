@@ -4,13 +4,11 @@ from . import views
 from django.contrib import admin
 from django.urls import path, include
 from django.contrib.auth import views as auth_views
+from .views import painting_holidays_view  
 
 
 urlpatterns = [
-
-
-
-
+    path('painting/holidays/', views.painting_holidays_view, name='painting_holidays'),
 
     path('painting/api/workers/', views.painting_workers_api, name='painting_workers_api'),
     path('painting/api/workers/<int:worker_id>/', views.painting_worker_detail_api, name='painting_worker_detail_api'),

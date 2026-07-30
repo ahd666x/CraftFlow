@@ -50,7 +50,6 @@ from .decorators import admin_or_manager_required
 from .models import Order, OrderItem, ProductionTask, PackagingUnit, STATION_CHOICES
 from django.views.decorators.http import require_POST
 
-
 import datetime as dt
 import pandas as pd
 import jdatetime
@@ -4029,7 +4028,7 @@ def painting_schedule_view(request):
         ).prefetch_related('order_item__ordercolor').order_by('scheduled_start', 'step_order')
     )
 
-    workers = list(WorkerProfile.objects.filter(stage='paint').select_related('user'))
+    workers = list(WorkerProfile.objects.filter(stage='paint', is_available=True).select_related('user'))
 
     tasks_by_worker = {}
     for t in tasks:
@@ -4467,15 +4466,24 @@ def painting_reset_schedule(request):
         logger.error(f"خطا در painting_reset_schedule: {exc}\n{traceback.format_exc()}")
         return JsonResponse({'success': False, 'error': f'خطا در بازنشانی: {str(exc)}'})
 
+    remaining_unassigned = ProductionTask.objects.filter(
+        station_name='paint',
+        scheduled_start__date=gregorian,
+        status__in=['pending', 'waiting'],
+        assigned_worker__isnull=True,
+    ).count()
+
     message = (
         f'زمان‌بندی بازنشانی شد. '
-        f'{unassigned_count} تسک آزاد و {assigned_count} تسک مجدداً تخصیص داده شد.'
+        f'{unassigned_count} تسک آزاد، {assigned_count} تسک مجدداً تخصیص داده شد. '
+        f'{remaining_unassigned} تسک به دلیل نبود ظرفیت یا عدم تأیید skill باقی ماند.'
     )
     return JsonResponse({
         'success': True,
         'message': message,
         'unassigned_count': unassigned_count,
         'assigned_count': assigned_count,
+        'remaining_unassigned': remaining_unassigned,
     })
 
 
@@ -4582,3 +4590,66 @@ def delete_all_paint_tasks_for_order(request, order_id):
     messages.success(request, f"✅ {count} تسک نقاشی سفارش {order.id} حذف شدند.")
     return redirect('order_detail', order_id=order.id)
 
+
+
+# views.py - در بخش painting management
+
+@login_required
+@admin_or_manager_required
+def painting_holidays_view(request):
+    """مدیریت تعطیلات رسمی"""
+    from .utils import painting_nav_context
+    from datetime import datetime
+    import jdatetime
+
+    if request.method == 'POST' and request.headers.get('X-Requested-With') == 'XMLHttpRequest':
+        action = request.POST.get('action')
+
+        if action == 'create':
+            date_str = request.POST.get('date')  # تاریخ جلالی به فرمت YYYY-MM-DD
+            description = request.POST.get('description', '')
+            if not date_str:
+                return JsonResponse({'success': False, 'error': 'تاریخ الزامی است'})
+            try:
+                y, m, d = map(int, date_str.split('-'))
+                jalali_date = jdatetime.date(y, m, d)
+                gregorian_date = jalali_date.togregorian()
+                holiday, created = Holiday.objects.get_or_create(
+                    date=gregorian_date,
+                    defaults={'description': description}
+                )
+                if not created:
+                    return JsonResponse({'success': False, 'error': 'این تاریخ قبلاً ثبت شده است'})
+                return JsonResponse({
+                    'success': True,
+                    'id': holiday.id,
+                    'date': jalali_date.strftime('%Y-%m-%d'),
+                    'description': description
+                })
+            except (ValueError, TypeError):
+                return JsonResponse({'success': False, 'error': 'فرمت تاریخ نامعتبر'})
+
+        elif action == 'delete':
+            holiday_id = request.POST.get('holiday_id')
+            holiday = get_object_or_404(Holiday, pk=holiday_id)
+            holiday.delete()
+            return JsonResponse({'success': True})
+
+    # GET: نمایش لیست
+    holidays = Holiday.objects.all().order_by('-date')
+    # تبدیل تاریخ‌ها به جلالی برای نمایش
+    holidays_jalali = []
+    for h in holidays:
+        jalali_date = jdatetime.date.fromgregorian(date=h.date)
+        holidays_jalali.append({
+            'id': h.id,
+            'jalali_date': jalali_date.strftime('%Y-%m-%d'),
+            'description': h.description,
+        })
+
+    context = {
+        'active_tab': 'holidays',
+        'holidays': holidays_jalali,
+        **painting_nav_context(),
+    }
+    return render(request, 'painting_management/holidays.html', context)

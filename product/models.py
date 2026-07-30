@@ -786,3 +786,28 @@ def create_paint_tasks(tasks_list, order, quantity, process, base_step, order_it
             )
         )
 
+
+
+class Holiday(models.Model):
+    """
+    تعطیلات رسمی و روزهای غیرکاری
+    """
+    date = models.DateField(
+        unique=True,
+        verbose_name="تاریخ میلادی",
+        help_text="تاریخ دقیق تعطیلی (میلادی)"
+    )
+    description = models.CharField(
+        max_length=200,
+        blank=True,
+        verbose_name="مناسبت"
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = "تعطیلی"
+        verbose_name_plural = "تعطیلات"
+        ordering = ['date']
+
+    def __str__(self):
+        return f"{self.date} - {self.description}" if self.description else str(self.date)

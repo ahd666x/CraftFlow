@@ -1,0 +1,122 @@
+{% extends "painting_management/base.html" %}
+{% load static %}
+
+{% block title %}مدیریت تعطیلات{% endblock %}
+
+{% block painting_content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <h4 class="mb-0"><i class="bi bi-calendar-x me-2"></i>تعطیلات رسمی</h4>
+    <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#addHolidayModal">
+        <i class="bi bi-plus-circle"></i> افزودن تعطیلی
+    </button>
+</div>
+
+<div class="card shadow-sm">
+    <div class="card-body p-0">
+        <table class="table table-hover align-middle mb-0">
+            <thead class="table-light">
+                <tr>
+                    <th>#</th>
+                    <th>تاریخ (شمسی)</th>
+                    <th>مناسبت</th>
+                    <th>عملیات</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for h in holidays %}
+                <tr>
+                    <td>{{ forloop.counter }}</td>
+                    <td>{{ h.jalali_date }}</td>
+                    <td>{{ h.description|default:"—" }}</td>
+                    <td>
+                        <button class="btn btn-sm btn-outline-danger delete-holiday" data-id="{{ h.id }}">
+                            <i class="bi bi-trash"></i>
+                        </button>
+                    </td>
+                </tr>
+                {% empty %}
+                <tr>
+                    <td colspan="4" class="text-center text-muted">هیچ تعطیلی ثبت نشده است.</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<!-- Modal افزودن -->
+<div class="modal fade" id="addHolidayModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <form id="addHolidayForm">
+                <div class="modal-header">
+                    <h5 class="modal-title">افزودن تعطیلی جدید</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label class="form-label">تاریخ (شمسی)</label>
+                        <input type="text" class="form-control" name="date" id="holidayDate" placeholder="مثال: ۱۴۰۴-۰۵-۱۰" required>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">مناسبت (اختیاری)</label>
+                        <input type="text" class="form-control" name="description">
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">انصراف</button>
+                    <button type="submit" class="btn btn-success">ذخیره</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block painting_js %}
+<script>
+$(function() {
+    const csrf = '{{ csrf_token }}';
+
+    $('#addHolidayForm').on('submit', function(e) {
+        e.preventDefault();
+        $.ajax({
+            url: '{% url "painting_holidays" %}',
+            method: 'POST',
+            headers: {'X-Requested-With': 'XMLHttpRequest'},
+            data: {
+                csrfmiddlewaretoken: csrf,
+                action: 'create',
+                date: $('#holidayDate').val(),
+                description: $('[name="description"]').val()
+            },
+            success: function(resp) {
+                if (resp.success) location.reload();
+                else alert(resp.error || 'خطا');
+            },
+            error: function() { alert('خطای ارتباط با سرور'); }
+        });
+    });
+
+    $('.delete-holiday').on('click', function() {
+        if (!confirm('آیا از حذف این تعطیلی اطمینان دارید؟')) return;
+        const id = $(this).data('id');
+        $.ajax({
+            url: '{% url "painting_holidays" %}',
+            method: 'POST',
+            headers: {'X-Requested-With': 'XMLHttpRequest'},
+            data: {
+                csrfmiddlewaretoken: csrf,
+                action: 'delete',
+                holiday_id: id
+            },
+            success: function(resp) {
+                if (resp.success) location.reload();
+                else alert(resp.error || 'خطا');
+            },
+            error: function() { alert('خطای ارتباط با سرور'); }
+        });
+    });
+});
+</script>
+{% endblock %}

@@ -20,6 +20,7 @@ from .models import (
     PaintingProcess,
     WorkerProfile,
     Material,
+    Holiday,
     create_paint_tasks,
 )
 
@@ -60,9 +61,13 @@ def _get_worker_cache():
             ).select_related('user')
             for w in workers_qs:
                 user = w.user
+                skill_costs = {}
+                if isinstance(w.skill_costs, dict):
+                    skill_costs = {k: int(v) for k, v in w.skill_costs.items() if str(v).isdigit()}
                 _PAINT_WORKER_CACHE.append({
                     'user_id': user.id,
                     'skills': list(w.skills) if isinstance(w.skills, list) else [],
+                    'skill_costs': skill_costs,
                     'full_name': f"{user.first_name} {user.last_name}".strip() or user.username,
                 })
             logger.debug(f"کش کارگران: {len(_PAINT_WORKER_CACHE)} کارگر بارگذاری شد.")
@@ -110,6 +115,24 @@ def _safe_eval(expr, allowed_names):
 # ===================================================================
 #   توابع کمکی عمومی
 # ===================================================================
+
+# product/utils.py - بالای فایل در بخش توابع کمکی
+
+def is_working_day(jalali_date):
+    """
+    تعیین می‌کند که آیا تاریخ جلالی داده‌شده یک روز کاری است.
+    روزهای جمعه (weekday==4) و تاریخ‌های موجود در جدول Holiday تعطیل محسوب می‌شوند.
+    """
+    if not isinstance(jalali_date, jdatetime.date):
+        jalali_date = jdatetime.date.today()
+    # جمعه
+    if jalali_date.weekday() == 6:  # جمعه در jdatetime
+        return False
+    # تعطیلات رسمی
+    gregorian = jalali_date.togregorian()
+    return not Holiday.objects.filter(date=gregorian).exists()
+
+
 
 def get_material_for_color(color_code, mapping=None):
     default_map = {
@@ -560,13 +583,18 @@ class PaintingScheduler:
             product = task.order_item.product if task.order_item and task.order_item.product else None
             product_id = product.id if product else None
 
+            item_id = task.order_item_id
+            allowed_workers = None
+            if item_id and len(self._item_workers.get(item_id, set())) >= 2:
+                allowed_workers = self._item_workers.get(item_id, set())
+
             candidates = []
 
             if preferred_worker_id is not None:
                 for w in self.workers:
                     if w.get('user_id') == preferred_worker_id:
                         if skill in (w.get('skills') or []):
-                            if allowed_workers and preferred_worker_id not in allowed_workers:
+                            if allowed_workers is not None and preferred_worker_id not in allowed_workers:
                                 break
                             if not self._is_task_excluded_for_worker(preferred_worker_id, product_id, task.order_item_id):
                                 slot = self._find_gap(preferred_worker_id, duration, bounds, item_ready, prefer_early=is_short_task)
@@ -581,6 +609,9 @@ class PaintingScheduler:
                 if skill not in (w.get('skills') or []):
                     continue
 
+                if allowed_workers is not None and wid not in allowed_workers:
+                    continue
+
                 if self._is_task_excluded_for_worker(wid, product_id, task.order_item_id):
                     continue
 
@@ -589,7 +620,13 @@ class PaintingScheduler:
                     continue
 
                 load = self._get_worker_load(wid)
-                score = (slot - bounds['start']).total_seconds() / 60 + load * 5
+                skill_priority = 0
+                if skill and isinstance(w.get('skill_costs'), dict):
+                    try:
+                        skill_priority = int(w['skill_costs'].get(skill, 0))
+                    except (TypeError, ValueError):
+                        skill_priority = 0
+                score = (slot - bounds['start']).total_seconds() / 60 + load * 50 - skill_priority * 50
 
                 existing_worker_ids = self._order_worker_history.get(task.order_id, set())
                 if wid in existing_worker_ids:
@@ -798,6 +835,11 @@ def schedule_paint_items_auto(item_ids, start_date=None, max_days=100, initial_i
     item_cursors = dict(initial_item_cursors)
 
     while remaining and safety < max_days:
+        if not is_working_day(cur_date):
+            cur_date += jdatetime.timedelta(days=1)
+            safety += 1
+            continue
+
         sched = PaintingScheduler(remaining, cur_date, item_cursors)
         cnt, new_cursors = sched.schedule()
         total += cnt
@@ -823,6 +865,9 @@ def schedule_paint_items_auto(item_ids, start_date=None, max_days=100, initial_i
 def auto_assign_paint_tasks(target_date=None):
     if target_date is None:
         target_date = jdatetime.date.today()
+
+    if not is_working_day(target_date):
+        return 0
 
     tasks_qs = ProductionTask.objects.filter(
         station_name='paint',
@@ -1015,11 +1060,33 @@ def assign_task_to_worker(task_id, worker_id):
                     'error': f'کارگر برای این آیتم (شماره {task.order_item_id}) ممنوع شده است.'
                 }
 
+        # ۵. محدودیت حداکثر ۲ کارگر برای هر آیتم سفارش
+        if task.order_item_id:
+            existing_workers = set(
+                ProductionTask.objects.filter(
+                    order_item_id=task.order_item_id,
+                    station_name='paint',
+                    assigned_worker__isnull=False,
+                )
+                .exclude(pk=task.pk)
+                .values_list('assigned_worker_id', flat=True)
+            )
+            if len(existing_workers) >= 2 and int(worker_id) not in existing_workers:
+                return {
+                    'ok': False,
+                    'error': 'این آیتم سفارش قبلاً ۲ کارگر دارد و نمی‌توان کارگر جدیدی اضافه کرد.'
+                }
+
         # ۶. محاسبه زمان با استفاده از منطق Scheduler
         if task.scheduled_start:
             ref_date = task.scheduled_start.date()
         else:
             ref_date = timezone.localdate()
+
+        # در assign_task_to_worker، بعد از محاسبه ref_date:
+        ref_jalali = jdatetime.date.fromgregorian(date=ref_date)
+        if not is_working_day(ref_jalali):
+            return {'ok': False, 'error': 'امروز تعطیل رسمی است'}
 
         bounds = _worker_day_bounds(ref_date)
 
