@@ -1060,24 +1060,7 @@ def assign_task_to_worker(task_id, worker_id):
                     'error': f'کارگر برای این آیتم (شماره {task.order_item_id}) ممنوع شده است.'
                 }
 
-        # ۵. محدودیت حداکثر ۲ کارگر برای هر آیتم سفارش
-        if task.order_item_id:
-            existing_workers = set(
-                ProductionTask.objects.filter(
-                    order_item_id=task.order_item_id,
-                    station_name='paint',
-                    assigned_worker__isnull=False,
-                )
-                .exclude(pk=task.pk)
-                .values_list('assigned_worker_id', flat=True)
-            )
-            if len(existing_workers) >= 2 and int(worker_id) not in existing_workers:
-                return {
-                    'ok': False,
-                    'error': 'این آیتم سفارش قبلاً ۲ کارگر دارد و نمی‌توان کارگر جدیدی اضافه کرد.'
-                }
-
-        # ۶. محاسبه زمان با استفاده از منطق Scheduler
+        # ۵. محاسبه زمان با استفاده از منطق Scheduler
         if task.scheduled_start:
             ref_date = task.scheduled_start.date()
         else:
