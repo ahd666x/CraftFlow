@@ -172,6 +172,7 @@ urlpatterns = [
     path('painting/clear-schedule/', views.painting_clear_schedule, name='painting_clear_schedule'),
     path('painting/reset-schedule/', views.painting_reset_schedule, name='painting_reset_schedule'),
     path('painting/repaint-items/', views.painting_repaint_items, name='painting_repaint_items'),
+    path('painting/assignment-rules/', views.painting_assignment_rules_view, name='painting_assignment_rules'),
     path('orders/<int:order_id>/delete-tasks/', views.delete_all_tasks, name='delete_all_tasks'),
     path('item/<int:item_id>/delete-paint-tasks/', views.delete_paint_tasks, name='delete_paint_tasks'),
     path('orders/<int:order_id>/delete-paint-tasks/', views.delete_all_paint_tasks_for_order, name='delete_all_paint_tasks_for_order'),

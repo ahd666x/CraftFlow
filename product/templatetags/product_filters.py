@@ -1,9 +1,7 @@
 # product/templatetags/product_filters.py
 from django import template
-from django import template
 from django.contrib.humanize.templatetags.humanize import intcomma as humanize_intcomma
 import jdatetime
-from django import template
 
 
 register = template.Library()
@@ -17,15 +15,9 @@ def format_colors(value):
     return value.items()
 
 
-
-
 @register.filter
 def split(value, arg):
     return value.split(arg)
-
-
-
-
 
 
 @register.filter
@@ -36,34 +28,10 @@ def get_item(dictionary, key):
     return dictionary.get(key, '')
 
 
-
 @register.filter
 def zip_lists(a, b):
     """ترکیب دو لیست در قالب"""
     return zip(a, b)
-
-from django import template
-
-
-
-@register.filter
-def get_item(dictionary, key):
-    if dictionary is None:
-        return ''
-    return dictionary.get(key, '')
-
-@register.filter
-def zip_lists(a, b):
-    return zip(a, b)
-
-
-
-
-
-
-
-
-
 
 
 @register.filter
@@ -74,6 +42,7 @@ def intcomma(value):
     except (ValueError, TypeError):
         return value
 
+
 @register.filter
 def multiply(value, arg):
     """ضرب دو عدد"""
@@ -81,27 +50,6 @@ def multiply(value, arg):
         return float(value) * float(arg)
     except (ValueError, TypeError):
         return 0
-    
-
-
-
-
-
-
-
-
-
-@register.filter
-def intcomma(value):
-    try:
-        return humanize_intcomma(int(value))
-    except (ValueError, TypeError):
-        return value
-
-
-
-
-
 
 
 @register.filter
@@ -110,12 +58,12 @@ def persian_date(value):
     if not value:
         return ''
     try:
-        # اگر datetime باشد، قسمت date آن را می‌گیریم
         if hasattr(value, 'date'):
             value = value.date()
         return jdatetime.date.fromgregorian(date=value).strftime('%Y/%m/%d')
     except Exception:
         return str(value)
+
 
 @register.filter
 def task_color_code(task):

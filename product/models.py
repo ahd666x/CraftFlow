@@ -766,6 +766,77 @@ class PaintingStage(models.Model):
         return f"{self.process.name} - مرحله {self.order}: {self.name}"
 
 
+class PaintingAssignmentRule(models.Model):
+    """
+    قوانین تخصیص دستی کارگران به مراحل نقاشی بر اساس رنگ و مرحله.
+    این قوانین قبل از زمان‌بندی خودکار تنظیم می‌شوند و در الگوریتم
+    زمان‌بندی برای ترجیح دادن، محدود کردن یا منع کردن کارگر مورد نظر استفاده می‌شوند.
+    """
+    RULE_TYPE_CHOICES = [
+        ('priority', 'فقط اولویت‌دهی'),
+        ('exclusive', 'محدودکننده'),
+        ('exclusion', 'منع‌کننده'),
+    ]
+    worker = models.ForeignKey(
+        WorkerProfile,
+        on_delete=models.CASCADE,
+        verbose_name="کارگر",
+        related_name='assignment_rules'
+    )
+    painting_stage = models.ForeignKey(
+        'PaintingStage',
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        verbose_name="مرحله نقاشی (اختیاری)"
+    )
+    color_codes = models.JSONField(
+        null=True,
+        blank=True,
+        verbose_name="کدهای رنگ",
+        help_text="لیست کدهای رنگی که این قانون برای آن‌ها اعمال می‌شود (خالی = همه رنگ‌ها)"
+    )
+    process = models.ForeignKey(
+        PaintingProcess,
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        verbose_name="روند نقاشی (اختیاری)",
+        help_text="محدود کردن مرحله به یک روند خاص"
+    )
+    rule_type = models.CharField(
+        max_length=20,
+        choices=RULE_TYPE_CHOICES,
+        default='priority',
+        verbose_name="نوع قانون",
+        help_text="فقط اولویت‌دهی، محدودکننده (کارگر فقط همین تسک‌ها را بگیرد) یا منع‌کننده"
+    )
+    priority = models.IntegerField(
+        default=100,
+        verbose_name="اولویت",
+        help_text="عدد بالاتر = اولویت بیشتر در زمان‌بندی (فقط برای نوع اولویت‌دهی)"
+    )
+    is_active = models.BooleanField(
+        default=True,
+        verbose_name="فعال"
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = "قانون تخصیص کارگر"
+        verbose_name_plural = "قوانین تخصیص کارگر"
+        ordering = ['-priority', 'worker']
+
+    def __str__(self):
+        parts = []
+        if self.painting_stage:
+            parts.append(str(self.painting_stage))
+        if self.color_codes:
+            parts.append(f"رنگ‌های {', '.join(self.color_codes)}")
+        type_label = dict(self.RULE_TYPE_CHOICES).get(self.rule_type, self.rule_type)
+        return f"{self.worker} [{type_label}] ← {' + '.join(parts)}"
+
+
 def create_paint_tasks(tasks_list, order, quantity, process, base_step, order_item, color_part=''):
     """ایجاد تسک‌های نقاشی برای یک قطعه/آیتم و افزودن به task_list."""
     from .models import ProductionTask

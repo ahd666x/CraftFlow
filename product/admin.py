@@ -9,6 +9,7 @@ from .models import (
 from .forms import OrderForm, OrderItemForm, ColorForm, CompleteOrderForm
 from .models import ShipmentLog
 from .models import PaintingProcess, PaintingStage
+from .models import PaintingAssignmentRule
 
 # @admin.register(PackagingUnit)
 # class PackagingUnitAdmin(admin.ModelAdmin):
@@ -422,5 +423,17 @@ class PaintingStageAdmin(admin.ModelAdmin):
     fieldsets = (
         (None, {
             'fields': ('process', 'order', 'name', 'duration_minutes', 'drying_time_minutes', 'required_skill')
+        }),
+    )
+
+
+@admin.register(PaintingAssignmentRule)
+class PaintingAssignmentRuleAdmin(admin.ModelAdmin):
+    list_display = ['worker', 'painting_stage', 'color_codes', 'process', 'priority', 'is_active']
+    list_filter = ['is_active', 'painting_stage__process', 'process']
+    search_fields = ['worker__user__username', 'worker__user__first_name', 'worker__user__last_name']
+    fieldsets = (
+        (None, {
+            'fields': ('worker', 'painting_stage', 'color_codes', 'process', 'priority', 'is_active')
         }),
     )

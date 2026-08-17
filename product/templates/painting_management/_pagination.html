@@ -1,0 +1,27 @@
+{% if workers.has_other_pages %}
+<nav aria-label="Page navigation">
+    <ul class="pagination justify-content-center">
+        {% if workers.has_previous %}
+        <li class="page-item">
+            <a class="page-link" href="#" data-page="{{ workers.previous_page_number }}">&laquo;</a>
+        </li>
+        {% endif %}
+
+        {% for num in workers.paginator.page_range %}
+            {% if workers.number == num %}
+            <li class="page-item active"><span class="page-link">{{ num }}</span></li>
+            {% elif num > workers.number|add:'-3' and num < workers.number|add:'3' %}
+            <li class="page-item">
+                <a class="page-link" href="#" data-page="{{ num }}">{{ num }}</a>
+            </li>
+            {% endif %}
+        {% endfor %}
+
+        {% if workers.has_next %}
+        <li class="page-item">
+            <a class="page-link" href="#" data-page="{{ workers.next_page_number }}">&raquo;</a>
+        </li>
+        {% endif %}
+    </ul>
+</nav>
+{% endif %}

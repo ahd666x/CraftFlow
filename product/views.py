@@ -3923,14 +3923,23 @@ def painting_workers_view(request):
         )
     ).order_by('user__username')
 
-    # جستجو
+    # جستجو و فیلتر
     search = request.GET.get('search')
+    status = request.GET.get('status', '')
+    skill_filter = request.GET.get('skill', '')
     if search:
         workers = workers.filter(
             Q(user__username__icontains=search)
             | Q(user__first_name__icontains=search)
             | Q(user__last_name__icontains=search)
         )
+    if status:
+        if status == 'active':
+            workers = workers.filter(is_available=True)
+        elif status == 'inactive':
+            workers = workers.filter(is_available=False)
+    if skill_filter:
+        workers = workers.filter(skills__contains=[skill_filter])
 
     paginator = Paginator(workers, 20)
     page_number = request.GET.get('page')
@@ -3941,6 +3950,8 @@ def painting_workers_view(request):
         'active_tab': 'workers',
         'workers': page_obj,
         'search': search,
+        'status': status,
+        'skill_filter': skill_filter,
         'form': WorkerProfileForm(),
         'skill_choices': PaintingStage.SKILL_CHOICES,
         'all_products': Product.objects.all().order_by('name'),
@@ -4333,13 +4344,6 @@ def painting_assign_worker(request):
             'error': f'خطای داخلی: {str(e)}'
         })
 
-    except Exception as e:
-        logger.error(f"خطا در painting_assign_worker: {e}\n{traceback.format_exc()}")
-        return JsonResponse({
-            'success': False,
-            'error': f'خطای داخلی: {str(e)}'
-        })
-
 
 @login_required
 @admin_or_manager_required
@@ -4521,6 +4525,102 @@ def painting_repaint_items(request):
         })
     except Exception as e:
         return JsonResponse({'success': False, 'error': str(e)})
+
+
+@login_required
+@admin_or_manager_required
+def painting_assignment_rules_view(request):
+    """مدیریت قوانین تخصیص دستی کارگران به تسک‌های نقاشی بر اساس رنگ و مرحله"""
+    from .models import PaintingAssignmentRule
+    from .utils import painting_nav_context
+
+    if request.method == 'POST' and request.headers.get('X-Requested-With') == 'XMLHttpRequest':
+        action = request.POST.get('action')
+
+        if action == 'create':
+            worker_id = request.POST.get('worker')
+            stage_id = request.POST.get('stage') or None
+            process_id = request.POST.get('process') or None
+            color_codes_str = request.POST.get('color_codes', '')
+            rule_type = request.POST.get('rule_type', 'priority')
+            is_active = request.POST.get('is_active', 'true') == 'true'
+
+            if not worker_id:
+                return JsonResponse({'success': False, 'error': 'کارگر الزامی است'})
+
+            worker = get_object_or_404(WorkerProfile, pk=worker_id, stage='paint')
+            stage = get_object_or_404(PaintingStage, pk=stage_id) if stage_id else None
+            process = get_object_or_404(PaintingProcess, pk=process_id) if process_id else None
+
+            color_codes = [c.strip() for c in color_codes_str.split(',') if c.strip()] if color_codes_str else None
+
+            rule = PaintingAssignmentRule.objects.create(
+                worker=worker,
+                painting_stage=stage,
+                process=process,
+                color_codes=color_codes,
+                rule_type=rule_type,
+                priority=100,
+                is_active=is_active,
+            )
+            return JsonResponse({'success': True, 'id': rule.id})
+
+        elif action == 'edit':
+            rule_id = request.POST.get('rule_id')
+            rule = get_object_or_404(PaintingAssignmentRule, pk=rule_id)
+
+            worker_id = request.POST.get('worker')
+            stage_id = request.POST.get('stage') or None
+            process_id = request.POST.get('process') or None
+            color_codes_str = request.POST.get('color_codes', '')
+            rule_type = request.POST.get('rule_type', rule.rule_type)
+            is_active = request.POST.get('is_active', 'true') == 'true'
+
+            if worker_id:
+                rule.worker = get_object_or_404(WorkerProfile, pk=worker_id, stage='paint')
+            if stage_id:
+                rule.painting_stage = get_object_or_404(PaintingStage, pk=stage_id)
+            else:
+                rule.painting_stage = None
+            if process_id:
+                rule.process = get_object_or_404(PaintingProcess, pk=process_id)
+            else:
+                rule.process = None
+
+            rule.color_codes = [c.strip() for c in color_codes_str.split(',') if c.strip()] if color_codes_str else None
+            rule.rule_type = rule_type
+            rule.is_active = is_active
+            rule.save()
+            return JsonResponse({'success': True})
+
+        elif action == 'delete':
+            rule_id = request.POST.get('rule_id')
+            rule = get_object_or_404(PaintingAssignmentRule, pk=rule_id)
+            rule.delete()
+            return JsonResponse({'success': True})
+
+        elif action == 'toggle_active':
+            rule_id = request.POST.get('rule_id')
+            rule = get_object_or_404(PaintingAssignmentRule, pk=rule_id)
+            rule.is_active = not rule.is_active
+            rule.save()
+            return JsonResponse({'success': True, 'is_active': rule.is_active})
+
+        return JsonResponse({'success': False, 'error': 'عملیات نامعتبر'})
+
+    rules = PaintingAssignmentRule.objects.select_related(
+        'worker__user', 'painting_stage', 'painting_stage__process', 'process'
+    ).order_by('-priority')
+
+    context = {
+        'active_tab': 'assignment_rules',
+        'rules': rules,
+        'workers': WorkerProfile.objects.filter(stage='paint', is_available=True).select_related('user'),
+        'stages': PaintingStage.objects.all().select_related('process'),
+        'processes': PaintingProcess.objects.filter(is_active=True),
+        **painting_nav_context(),
+    }
+    return render(request, 'painting_management/assignment_rules.html', context)
 
 
 @login_required

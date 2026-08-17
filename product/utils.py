@@ -18,7 +18,9 @@ from .models import (
     OrderItem,
     ProductionLog,
     PaintingProcess,
+    PaintingStage,
     WorkerProfile,
+    PaintingAssignmentRule,
     Material,
     Holiday,
     create_paint_tasks,
@@ -66,7 +68,9 @@ def _get_worker_cache():
                     skill_costs = {k: int(v) for k, v in w.skill_costs.items() if str(v).isdigit()}
                 _PAINT_WORKER_CACHE.append({
                     'user_id': user.id,
-                    'skills': list(w.skills) if isinstance(w.skills, list) else [],
+                    'skills': list(
+                        {token.strip() for s in (w.skills or []) for token in str(s).split() if token.strip()}
+                    ) if isinstance(w.skills, list) else [],
                     'skill_costs': skill_costs,
                     'full_name': f"{user.first_name} {user.last_name}".strip() or user.username,
                 })
@@ -126,7 +130,7 @@ def is_working_day(jalali_date):
     if not isinstance(jalali_date, jdatetime.date):
         jalali_date = jdatetime.date.today()
     # جمعه
-    if jalali_date.weekday() == 6:  # جمعه در jdatetime
+    if jalali_date.weekday() == 4:  # جمعه در jdatetime
         return False
     # تعطیلات رسمی
     gregorian = jalali_date.togregorian()
@@ -367,8 +371,66 @@ def _worker_day_bounds(gregorian_date):
     }
 
 
+# ===================================================================
+#   قوانین تخصیص کارگر (PaintingAssignmentRule)
+# ===================================================================
+
+def _task_matches_rule(task, rule):
+    """
+    بررسی می‌کند که آیا یک تسک (ProductionTask) با قانون داده‌شده مطابقت دارد.
+    یک تسک با یک قانون مطابقت دارد اگر:
+      - اگر rule.painting_stage تنظیم شده باشد، مرحله تسک برابر آن باشد.
+      - اگر rule.process تنظیم شده باشد، روند مرحله تسک برابر آن باشد.
+      - اگر rule.color_codes تنظیم شده باشد، کد رنگ تسک در لیست باشد.
+    """
+    # بررسی مرحله (اگر rule.painting_stage تنظیم شده باشد)
+    if rule.painting_stage is not None:
+        if task.painting_stage_id != rule.painting_stage_id:
+            return False
+
+    # بررسی روند (اگر rule.process تنظیم شده باشد)
+    if rule.process is not None:
+        if not task.painting_stage or task.painting_stage.process_id != rule.process_id:
+            return False
+
+    # بررسی کدهای رنگ (اگر rule.color_codes تنظیم شده باشد)
+    if rule.color_codes:
+        if not task.order_item or not task.color_part:
+            return False
+
+        item = task.order_item
+        color_code = None
+
+        # ابتدا سعی می‌کنیم از Color (ordercolor) بخوانیم
+        try:
+            color_obj = item.ordercolor.filter(
+                part=task.color_part
+            ).first()
+            if color_obj and color_obj.code and color_obj.code != 'nan':
+                color_code = str(color_obj.code)
+        except Exception:
+            pass
+
+        # در غیر این صورت از default_colors محصول استفاده کن
+        if color_code is None:
+            default = item.product.default_colors or {}
+            if isinstance(default, str):
+                try:
+                    default = json.loads(default) or {}
+                except (json.JSONDecodeError, TypeError):
+                    default = {}
+            code = default.get(task.color_part)
+            if code and code != 'nan':
+                color_code = str(code)
+
+        if color_code is None or color_code not in rule.color_codes:
+            return False
+
+    return True
+
+
 class PaintingScheduler:
-    def __init__(self, task_ids, target_date, initial_item_cursors=None):
+    def __init__(self, task_ids, target_date, initial_item_cursors=None, assignment_rules=None):
         self.task_ids = list(task_ids) if task_ids else []
         self.target_date = target_date if isinstance(target_date, jdatetime.date) else jdatetime.date.today()
         self.tasks = []
@@ -387,6 +449,9 @@ class PaintingScheduler:
 
         # کش آیتم‌های ممنوعه برای هر کارگر
         self._excluded_items_map = {}
+
+        # قوانین تخصیص کارگر (PaintingAssignmentRule)
+        self.assignment_rules = assignment_rules or []
 
         # ردیابی کارگران تخصیص‌یافته به هر آیتم
         self._item_workers = defaultdict(set)
@@ -573,20 +638,57 @@ class PaintingScheduler:
             self.worker_load[worker_id] = total
         return self.worker_load.get(worker_id, 0)
 
+    def _worker_rule_info(self, task):
+        """
+        برای یک تسک مشخص، وضعیت قوانین هر کارگر را برمی‌گرداند:
+          - excluded: آیا قانون منع‌کننده‌ای برای این تسک وجود دارد؟
+          - has_exclusive: آیا کارگر قانون محدودکننده‌ای دارد؟
+          - matches_exclusive: آیا تسک با حداقل یک قانون محدودکننده‌ی این کارگر مطابقت دارد؟
+        """
+        info = {}
+        for w in self.workers:
+            wid = w.get('user_id')
+            if wid is not None:
+                info[wid] = {
+                    'excluded': False,
+                    'has_exclusive': False,
+                    'matches_exclusive': False,
+                }
+
+        for rule in self.assignment_rules:
+            if not rule.is_active:
+                continue
+            wid = rule.worker.user_id
+            if wid not in info:
+                continue
+
+            task_matches = _task_matches_rule(task, rule)
+
+            if rule.rule_type == 'exclusion' and task_matches:
+                info[wid]['excluded'] = True
+
+            if rule.rule_type == 'exclusive':
+                info[wid]['has_exclusive'] = True
+                if task_matches:
+                    info[wid]['matches_exclusive'] = True
+
+        return info
+
     def _select_worker(self, task, bounds, item_ready, preferred_worker_id=None):
         try:
             skill = task.painting_stage.required_skill if task.painting_stage else 'painter'
             duration = task.painting_stage.duration_minutes if task.painting_stage else 60
             is_short_task = duration <= 30
 
-            # FIX: تعریف product_id در ابتدا
             product = task.order_item.product if task.order_item and task.order_item.product else None
             product_id = product.id if product else None
 
             item_id = task.order_item_id
-            allowed_workers = None
+            item_allowed_workers = None
             if item_id and len(self._item_workers.get(item_id, set())) >= 2:
-                allowed_workers = self._item_workers.get(item_id, set())
+                item_allowed_workers = self._item_workers.get(item_id, set())
+
+            rule_info = self._worker_rule_info(task)
 
             candidates = []
 
@@ -594,8 +696,13 @@ class PaintingScheduler:
                 for w in self.workers:
                     if w.get('user_id') == preferred_worker_id:
                         if skill in (w.get('skills') or []):
-                            if allowed_workers is not None and preferred_worker_id not in allowed_workers:
+                            if rule_info[preferred_worker_id]['excluded']:
                                 break
+                            if rule_info[preferred_worker_id]['has_exclusive'] and not rule_info[preferred_worker_id]['matches_exclusive']:
+                                break
+                            if item_allowed_workers is not None and preferred_worker_id not in item_allowed_workers:
+                                if not rule_info[preferred_worker_id]['matches_exclusive']:
+                                    break
                             if not self._is_task_excluded_for_worker(preferred_worker_id, product_id, task.order_item_id):
                                 slot = self._find_gap(preferred_worker_id, duration, bounds, item_ready, prefer_early=is_short_task)
                                 if slot is not None:
@@ -606,11 +713,18 @@ class PaintingScheduler:
                 wid = w.get('user_id')
                 if wid is None:
                     continue
+
+                if rule_info[wid]['excluded']:
+                    continue
+                if rule_info[wid]['has_exclusive'] and not rule_info[wid]['matches_exclusive']:
+                    continue
+
                 if skill not in (w.get('skills') or []):
                     continue
 
-                if allowed_workers is not None and wid not in allowed_workers:
-                    continue
+                if item_allowed_workers is not None and wid not in item_allowed_workers:
+                    if not rule_info[wid]['matches_exclusive']:
+                        continue
 
                 if self._is_task_excluded_for_worker(wid, product_id, task.order_item_id):
                     continue
@@ -632,6 +746,12 @@ class PaintingScheduler:
                 if wid in existing_worker_ids:
                     score -= 200
 
+                for rule in self.assignment_rules:
+                    if rule.is_active and rule.worker.user_id == wid and _task_matches_rule(task, rule):
+                        if rule.rule_type == 'priority':
+                            score -= rule.priority * 10
+                            break
+
                 if is_short_task:
                     gap_size = self._get_gap_size(wid, slot, bounds)
                     if gap_size and gap_size <= duration * 2:
@@ -643,7 +763,11 @@ class PaintingScheduler:
                 return None, None
 
             candidates.sort(key=lambda x: x[0])
-            return candidates[0][1], candidates[0][2]
+            selected_score, selected_wid, selected_slot = candidates[0]
+            logger.debug(
+                f"انتخاب کارگر برای تسک {task.id}: کارگر {selected_wid} با امتیاز {selected_score:.1f}، اسلات {selected_slot}"
+            )
+            return selected_wid, selected_slot
 
         except Exception as e:
             logger.error(f"خطا در _select_worker: {e}\n{traceback.format_exc()}")
@@ -786,6 +910,18 @@ def _get_initial_item_cursors(item_ids):
     return cursors
 
 
+def _get_active_assignment_rules():
+    """دریافت لیست قوانین تخصیص فعال برای استفاده در زمان‌بندی."""
+    try:
+        return list(
+            PaintingAssignmentRule.objects.filter(is_active=True)
+            .select_related('worker', 'worker__user', 'painting_stage', 'painting_stage__process', 'process')
+        )
+    except Exception as e:
+        logger.error(f"خطا در بارگذاری قوانین تخصیص: {e}")
+        return []
+
+
 def schedule_paint_tasks_for_items(item_ids, target_date, initial_item_cursors=None):
     if not item_ids:
         return 0, {}
@@ -800,7 +936,7 @@ def schedule_paint_tasks_for_items(item_ids, target_date, initial_item_cursors=N
     if not task_ids:
         return 0, {}
 
-    sched = PaintingScheduler(task_ids, target_date, initial_item_cursors)
+    sched = PaintingScheduler(task_ids, target_date, initial_item_cursors, assignment_rules=_get_active_assignment_rules())
     if not isinstance(sched, PaintingScheduler):
         logger.error(f"خطا: sched از نوع {type(sched)} است، انتظار PaintingScheduler داشتیم.")
         raise TypeError(f"sched باید از نوع PaintingScheduler باشد، اما {type(sched)} دریافت شد.")
@@ -840,7 +976,7 @@ def schedule_paint_items_auto(item_ids, start_date=None, max_days=100, initial_i
             safety += 1
             continue
 
-        sched = PaintingScheduler(remaining, cur_date, item_cursors)
+        sched = PaintingScheduler(remaining, cur_date, item_cursors, assignment_rules=_get_active_assignment_rules())
         cnt, new_cursors = sched.schedule()
         total += cnt
         item_cursors.update(new_cursors)
@@ -889,7 +1025,7 @@ def auto_assign_paint_tasks(target_date=None):
     item_ids = list(tasks_qs.values_list('order_item_id', flat=True).distinct())
     initial_cursors = _get_initial_item_cursors(item_ids)
 
-    sched = PaintingScheduler(task_ids, target_date, initial_cursors)
+    sched = PaintingScheduler(task_ids, target_date, initial_cursors, assignment_rules=_get_active_assignment_rules())
     cnt, _ = sched.schedule()
     return cnt
 
@@ -1043,6 +1179,29 @@ def assign_task_to_worker(task_id, worker_id):
                 'ok': False,
                 'error': f'کارگر مهارت "{required_skill}" را ندارد. مهارت‌های فعلی: {", ".join(worker_data.get("skills") or [])}'
             }
+
+        # ۳-ب. بررسی قوانین تخصیص
+        active_rules = _get_active_assignment_rules()
+        worker_id_int = int(worker_id)
+
+        # بررسی منع‌کننده
+        for rule in active_rules:
+            if rule.worker.user_id == worker_id_int and rule.rule_type == 'exclusion':
+                if _task_matches_rule(task, rule):
+                    return {'ok': False, 'error': 'این کارگر طبق قانون منع شده است.'}
+
+        # بررسی محدودکننده
+        has_exclusive = any(
+            rule.is_active and rule.worker.user_id == worker_id_int and rule.rule_type == 'exclusive'
+            for rule in active_rules
+        )
+        if has_exclusive:
+            matches_exclusive = any(
+                rule.is_active and rule.worker.user_id == worker_id_int and rule.rule_type == 'exclusive' and _task_matches_rule(task, rule)
+                for rule in active_rules
+            )
+            if not matches_exclusive:
+                return {'ok': False, 'error': 'این کارگر فقط مجاز به تسک‌های مطابق قانونش است.'}
 
         # ۴. بررسی استثناهای محصول
         product = task.order_item.product if task.order_item and task.order_item.product else None

@@ -197,7 +197,6 @@
     {% block extra_css %}{% endblock %}
 </head>
 <body>
-    {% csrf_token %}
 
     <!-- ====== هدر یکپارچه با ناوبری وسط ====== -->
     <header class="header-nav">
@@ -220,6 +219,10 @@
             </a>
             <a href="{% url 'painting_workers' %}" class="nav-link {% if request.resolver_match.url_name == 'painting_workers' %}active{% endif %}">
                 <i class="bi bi-people"></i> کارگران
+            </a>
+
+            <a href="{% url 'painting_assignment_rules' %}" class="nav-link {% if request.resolver_match.url_name == 'painting_assignment_rules' %}active{% endif %}">
+                <i class="bi bi-puzzle"></i> قوانین تخصیص
             </a>
 
             <a class="nav-link {% if active_tab == 'holidays' %}active{% endif %}" href="{% url 'painting_holidays' %}">
