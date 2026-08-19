@@ -4344,12 +4344,6 @@ def painting_assign_worker(request):
         result = assign_task_to_worker(task_id, worker_id, target_date=target_date)
 
         if result.get('ok'):
-            from .utils import parse_jalali_date, reschedule_worker_tasks_on_date
-            try:
-                td = parse_jalali_date(target_date) if target_date else jdatetime.date.today()
-            except Exception:
-                td = jdatetime.date.today()
-            reschedule_worker_tasks_on_date(int(worker_id), td)
             return JsonResponse({
                 'success': True,
                 'message': f"تسک به کارگر تخصیص یافت ({result.get('scheduled_start')} تا {result.get('scheduled_end')})",

@@ -5,7 +5,7 @@ import json
 import logging
 import traceback
 from datetime import datetime, time, timedelta
-from collections import defaultdict
+from collections import defaultdict, deque
 
 import jdatetime
 from django.db import transaction
@@ -261,9 +261,229 @@ def parse_jalali_date(date_str):
 
 
 # ===================================================================
+#   استثناهای داخلی برای کنترل جریان زمان‌بندی زنجیره‌ای (cascade)
+# ===================================================================
+class _CascadeCannotFit(Exception):
+    """وقتی درج/جابه‌جایی یک تسک در محدودهٔ روز کاری کارگر جا نمی‌شود."""
+    def __init__(self, task, worker_id):
+        self.task = task
+        self.worker_id = worker_id
+
+
+class _CascadeTooComplex(Exception):
+    """وقتی تعداد جابه‌جایی‌های زنجیره‌ای از سقف ایمنی عبور می‌کند."""
+    pass
+
+
+class _CascadeCrossDayConflict(Exception):
+    """وقتی جابه‌جایی باعث نامعتبر شدن مرحله‌ای در روز دیگر می‌شود (خارج از دامنهٔ cascade تک‌روزه)."""
+    def __init__(self, task):
+        self.task = task
+
+
+MAX_CASCADE_STEPS = 100
+
+
+# ===================================================================
+#   کمکی‌های زنجیرهٔ مراحل یک قطعه (order_item + color_part)
+# ===================================================================
+def _get_item_ready_time(order_item_id, color_part, step_order, exclude_task_id=None):
+    """
+    زمانی که این قطعه/رنگ برای اجرای این مرحله آماده است،
+    بر اساس پایان آخرین مرحلهٔ قبلیِ زمان‌بندی‌شده (روی هر کارگری) + زمان خشک‌شدن آن.
+    """
+    prev_task = ProductionTask.objects.filter(
+        order_item_id=order_item_id,
+        color_part=color_part,
+        station_name='paint',
+        step_order__lt=step_order,
+        scheduled_end__isnull=False,
+    ).exclude(pk=exclude_task_id).order_by('-step_order', '-scheduled_end').first()
+
+    if prev_task:
+        drying = prev_task.painting_stage.drying_time_minutes if prev_task.painting_stage else 0
+        return prev_task.scheduled_end + timedelta(minutes=drying)
+    return None
+
+
+def _get_item_next_task(order_item_id, color_part, step_order, exclude_task_id=None):
+    """نزدیک‌ترین مرحلهٔ بعدیِ زمان‌بندی‌شدهٔ همین قطعه/رنگ (برای بررسی وابستگی رو به جلو)."""
+    return ProductionTask.objects.filter(
+        order_item_id=order_item_id,
+        color_part=color_part,
+        station_name='paint',
+        step_order__gt=step_order,
+        scheduled_start__isnull=False,
+    ).exclude(pk=exclude_task_id).select_related('painting_stage', 'order_item').order_by('step_order').first()
+
+
+# ===================================================================
+#   درج + جابه‌جایی دومینویی در برنامهٔ یک روز از یک کارگر
+# ===================================================================
+def _insert_and_cascade_worker_day(timeline, bounds, new_start, new_end, new_task_marker):
+    """
+    یک تسک جدید را در timeline درج می‌کند و تسک‌های بعدی را در صورت تداخل به جلو هل می‌دهد.
+    وقفهٔ ناهار (bounds['break_start']..bounds['break_end']) کاملاً ثابت است: هیچ تسکی
+    نمی‌تواند رویش بیفتد و خودش هرگز جابه‌جا نمی‌شود.
+    """
+    lunch_start, lunch_end = bounds['break_start'], bounds['break_end']
+
+    # ناهار را از لیست قابل‌شیفت جدا می‌کنیم؛ خودش را جداگانه و بدون تغییر مدیریت می‌کنیم
+    items = [list(row) for row in timeline if row[2] is not None]
+    items.append([new_start, new_end, new_task_marker])
+    items.sort(key=lambda r: r[0])
+
+    pushed = []
+    prev_end = bounds['start']
+
+    for row in items:
+        s, e, t = row
+        old_s, old_e = s, e
+
+        if s < prev_end:
+            shift = prev_end - s
+            s, e = s + shift, e + shift
+
+        if s < lunch_end and e > lunch_start:
+            shift = lunch_end - s
+            s, e = s + shift, e + shift
+
+        row[0], row[1] = s, e
+
+        if (s, e) != (old_s, old_e) and t is not new_task_marker:
+            pushed.append(t)
+
+        if e > bounds['end']:
+            raise _CascadeCannotFit(t if t is not new_task_marker else new_task_marker, None)
+
+        prev_end = e
+
+    # ردیف ثابت ناهار را دوباره اضافه می‌کنیم (بقیهٔ کد انتظار وجودش را دارد)
+    items.append([lunch_start, lunch_end, None])
+    items.sort(key=lambda r: r[0])
+
+    return items, pushed
+
+
+def _maybe_enqueue_successor(t, new_end, ref_date, changes, task_objects, queue):
+    """اگر مرحلهٔ بعدیِ همین قطعه/رنگ به‌خاطر تغییر t دیگر معتبر نباشد، آن را به صف پردازش اضافه می‌کند."""
+    if not (t.order_item_id and t.color_part):
+        return
+
+    drying = t.painting_stage.drying_time_minutes if t.painting_stage else 0
+    required_ready = new_end + timedelta(minutes=drying)
+
+    succ = _get_item_next_task(t.order_item_id, t.color_part, t.step_order, exclude_task_id=t.pk)
+    if not succ:
+        return
+
+    if succ.pk in changes:
+        succ_wid, succ_start, _ = changes[succ.pk]
+    else:
+        succ_wid, succ_start = succ.assigned_worker_id, succ.scheduled_start
+
+    if succ_start is None or succ_start >= required_ready:
+        return  # همچنان معتبر است
+
+    if succ_start.date() != ref_date:
+        raise _CascadeCrossDayConflict(succ)
+
+    task_objects.setdefault(succ.pk, succ)
+    queue.append((succ, succ_wid, required_ready))
+
+
+def _run_cascade_schedule(gregorian_date, initial_entries, exclude_task_ids=None):
+    """
+    موتور مشترک درج + جابه‌جایی دومینویی برای یک روز مشخص (تقویم میلادی).
+
+    initial_entries: لیستی از (task, worker_id, min_start) که باید (دوباره) در
+                     برنامهٔ آن روز درج شوند.
+    exclude_task_ids: شناسهٔ تسک‌هایی که نباید از حالت فعلیِ دیتابیس در timeline
+                      بارگذاری شوند، چون خودشان در حال درج/جابه‌جایی مجددند.
+
+    خروجی: (changes, task_objects)
+        changes: dict از task_id -> (worker_id, start, end)
+        task_objects: dict از task_id -> شیء ProductionTask (برای اعمال نهایی توسط فراخواننده)
+
+    این تابع باید داخل transaction.atomic() فراخوانی شود؛ خودش قفل لازم روی
+    تسک‌های همان روز می‌گیرد.
+    """
+    exclude_task_ids = set(exclude_task_ids or [])
+    initial_ids = {t.pk for t, _, _ in initial_entries} | exclude_task_ids
+
+    day_tasks = list(
+        ProductionTask.objects.select_for_update().filter(
+            station_name='paint',
+            scheduled_start__date=gregorian_date,
+            scheduled_start__isnull=False,
+        ).exclude(pk__in=initial_ids).select_related('painting_stage', 'order_item')
+    )
+
+    task_objects = {t.pk: t for t, _, _ in initial_entries}
+    for t in day_tasks:
+        task_objects[t.pk] = t
+
+    timelines = defaultdict(list)
+    bounds_cache = {}
+
+    def get_bounds(wid):
+        if wid not in bounds_cache:
+            bounds_cache[wid] = _worker_day_bounds(gregorian_date, worker_id=wid)
+        return bounds_cache[wid]
+
+    for t in day_tasks:
+        wid = t.assigned_worker_id
+        if wid is None:
+            continue
+        timelines[wid].append([t.scheduled_start, t.scheduled_end, t])
+
+    changes = {}
+    queue = deque(initial_entries)
+
+    steps = 0
+    while queue:
+        steps += 1
+        if steps > MAX_CASCADE_STEPS:
+            raise _CascadeTooComplex()
+
+        cur_task, wid, min_start = queue.popleft()
+        bounds = get_bounds(wid)
+
+        for tl in timelines.values():
+            tl[:] = [row for row in tl if not (row[2] is not None and row[2].pk == cur_task.pk)]
+
+        if not any(row[2] is None for row in timelines[wid]):
+            timelines[wid].append([bounds['break_start'], bounds['break_end'], None])
+
+        duration = cur_task.painting_stage.duration_minutes if cur_task.painting_stage else DEFAULT_TASK_DURATION_MINUTES
+
+        start_candidate = bounds['start']
+        if min_start and min_start > start_candidate:
+            start_candidate = min_start
+        end_candidate = start_candidate + timedelta(minutes=duration)
+
+        new_items, pushed = _insert_and_cascade_worker_day(
+            timelines[wid], bounds, start_candidate, end_candidate, cur_task
+        )
+        timelines[wid] = new_items
+
+        final_row = next(r for r in new_items if r[2] is cur_task)
+        final_start, final_end = final_row[0], final_row[1]
+        changes[cur_task.pk] = (wid, final_start, final_end)
+
+        _maybe_enqueue_successor(cur_task, final_end, gregorian_date, changes, task_objects, queue)
+
+        for pt in pushed:
+            row = next(r for r in new_items if r[2] is pt)
+            changes[pt.pk] = (wid, row[0], row[1])
+            _maybe_enqueue_successor(pt, row[1], gregorian_date, changes, task_objects, queue)
+
+    return changes, task_objects
+
+
+# ===================================================================
 #   توابع مربوط به کوئری‌های آماده نقاشی
 # ===================================================================
-
 def get_painting_ready_items_queryset(search=None, process_id=None):
     has_mon = ProductionLog.objects.filter(order_item=OuterRef('pk'), stage='mon')
     has_paint = ProductionLog.objects.filter(order_item=OuterRef('pk'), stage='paint')
@@ -297,6 +517,7 @@ def get_painting_ready_items_queryset(search=None, process_id=None):
             Q(order__user__first_name__icontains=search) |
             Q(order__user__last_name__icontains=search)
         )
+
     if process_id:
         qs = qs.filter(
             Q(paint_tasks__painting_stage__process_id=process_id) |
@@ -1147,17 +1368,11 @@ def repaint_item_ids_for_date(item_ids, target_date):
 
 def assign_task_to_worker(task_id, worker_id, target_date=None):
     """
-    تخصیص دستی یک تسک نقاشی به یک کارگر خاص (برای درگ‌اند‌دراپ در کانبان).
-
-    پارامترها:
-        task_id: شناسه تسک نقاشی
-        worker_id: شناسه کاربر کارگر
-        target_date: تاریخ هدف برای زمان‌بندی (jdatetime.date یا None برای امروز)
-
-    خروجی:
-        dict: {'ok': True/False, 'error': str (در صورت خطا)}
-              در صورت موفقیت:
-              {'ok': True, 'scheduled_start': '08:30', 'scheduled_end': '09:15'}
+    تخصیص پویا/دستی یک تسک نقاشی به یک کارگر (درگ‌اند‌دراپ در کانبان).
+    در صورت نیاز، تسک‌های دیگر (همان کارگر یا کارگران دیگر که به لحاظ زنجیرهٔ مراحل
+    وابسته‌اند) به‌صورت خودکار جابه‌جا می‌شوند تا نه تداخل زمانی رخ دهد و نه ترتیب مراحل
+    نقض شود. اگر این کار در محدودهٔ همان روز ممکن نباشد، عملیات کاملاً لغو (rollback)
+    و خطای شفاف برگردانده می‌شود.
     """
     try:
         target_date_obj = None
@@ -1176,25 +1391,20 @@ def assign_task_to_worker(task_id, worker_id, target_date=None):
         # ۱. دریافت تسک
         task = ProductionTask.objects.select_related(
             'painting_stage', 'order_item', 'order_item__product'
-        ).filter(
-            pk=task_id,
-            station_name='paint'
-        ).first()
+        ).filter(pk=task_id, station_name='paint').first()
 
         if not task:
             return {'ok': False, 'error': 'تسک یافت نشد'}
-
         if task.status == 'done':
             return {'ok': False, 'error': 'این تسک قبلاً انجام شده است'}
 
-        # ۲. دریافت کارگر مقصد از کش کارگران فعال
+        # ۲. کارگر مقصد
         workers = _get_worker_cache()
         worker_data = next((w for w in workers if w['user_id'] == worker_id), None)
-
         if not worker_data:
             return {'ok': False, 'error': 'کارگر یافت نشد یا غیرفعال است'}
 
-        # ۳. بررسی مهارت
+        # ۳. مهارت
         required_skill = task.painting_stage.required_skill if task.painting_stage else 'painter'
         if required_skill not in (worker_data.get('skills') or []):
             return {
@@ -1202,43 +1412,32 @@ def assign_task_to_worker(task_id, worker_id, target_date=None):
                 'error': f'کارگر مهارت "{required_skill}" را ندارد. مهارت‌های فعلی: {", ".join((worker_data.get("skills") or []))}'
             }
 
-        # ۳-ب. بررسی قوانین تخصیص
+        # ۳-ب. قوانین تخصیص
         active_rules = _get_active_assignment_rules()
-        worker_id_int = int(worker_id)
-
-        # بررسی منع‌کننده
         for rule in active_rules:
-            if rule.worker.user_id == worker_id_int and rule.rule_type == 'exclusion':
-                if _task_matches_rule(task, rule):
-                    return {'ok': False, 'error': 'این کارگر طبق قانون منع شده است.'}
+            if rule.worker.user_id == worker_id and rule.rule_type == 'exclusion' and _task_matches_rule(task, rule):
+                return {'ok': False, 'error': 'این کارگر طبق قانون منع شده است.'}
 
-        # بررسی محدودکننده
         has_exclusive = any(
-            rule.is_active and rule.worker.user_id == worker_id_int and rule.rule_type == 'exclusive'
-            for rule in active_rules
+            r.is_active and r.worker.user_id == worker_id and r.rule_type == 'exclusive' for r in active_rules
         )
         if has_exclusive:
             matches_exclusive = any(
-                rule.is_active and rule.worker.user_id == worker_id_int and rule.rule_type == 'exclusive' and _task_matches_rule(task, rule)
-                for rule in active_rules
+                r.is_active and r.worker.user_id == worker_id and r.rule_type == 'exclusive' and _task_matches_rule(task, r)
+                for r in active_rules
             )
             if not matches_exclusive:
                 return {'ok': False, 'error': 'این کارگر فقط مجاز به تسک‌های مطابق قانونش است.'}
 
-        # ۴. بررسی استثناهای محصول و آیتم (یک کوئری واحد)
+        # ۴. استثناهای محصول/آیتم
         worker_profile = WorkerProfile.objects.filter(user_id=worker_id).first()
         if task.order_item and task.order_item.product:
-            product = task.order_item.product
-            if worker_profile and worker_profile.excluded_products.filter(id=product.id).exists():
-                return {'ok': False, 'error': f'این کارگر برای محصول "{product.name}" ممنوع است'}
-
+            if worker_profile and worker_profile.excluded_products.filter(id=task.order_item.product.id).exists():
+                return {'ok': False, 'error': f'این کارگر برای محصول "{task.order_item.product.name}" ممنوع است'}
         if task.order_item_id and worker_profile and worker_profile.excluded_items.filter(id=task.order_item_id).exists():
-            return {
-                'ok': False,
-                'error': f'کارگر برای این آیتم (شماره {task.order_item_id}) ممنوع شده است.'
-            }
+            return {'ok': False, 'error': f'کارگر برای این آیتم (شماره {task.order_item_id}) ممنوع شده است.'}
 
-        # ۵. محاسبه زمان با استفاده از منطق Scheduler
+        # ۵. تعیین روز مرجع
         if task.scheduled_start:
             ref_date = task.scheduled_start.date()
         elif target_date_obj:
@@ -1246,59 +1445,85 @@ def assign_task_to_worker(task_id, worker_id, target_date=None):
         else:
             ref_date = timezone.localdate()
 
-        # در assign_task_to_worker، بعد از محاسبه ref_date:
         ref_jalali = jdatetime.date.fromgregorian(date=ref_date)
         if not is_working_day(ref_jalali):
             return {'ok': False, 'error': 'امروز تعطیل رسمی است'}
 
-        bounds = _worker_day_bounds(ref_date, worker_id=worker_id)
+        # ۶. زنجیرهٔ درج + جابه‌جایی دومینویی (از موتور مشترک استفاده می‌شود)
+        old_worker_id = task.assigned_worker_id
+        try:
+            with transaction.atomic():
+                item_ready = None
+                if task.order_item_id and task.color_part:
+                    item_ready = _get_item_ready_time(
+                        task.order_item_id, task.color_part, task.step_order, exclude_task_id=task.pk
+                    )
 
-        with transaction.atomic():
-            WorkerProfile.objects.select_for_update().filter(user_id=worker_id).first()
-            existing_tasks = list(
-                ProductionTask.objects.select_for_update().filter(
-                    assigned_worker_id=worker_id,
-                    station_name='paint',
-                    scheduled_start__date=ref_date,
-                    scheduled_start__isnull=False,
-                ).exclude(pk=task_id)
-            )
+                initial_entries = [(task, worker_id, item_ready)]
+                if old_worker_id and old_worker_id != worker_id:
+                    source_tasks = list(
+                        ProductionTask.objects.filter(
+                            station_name='paint',
+                            assigned_worker_id=old_worker_id,
+                            scheduled_start__date=ref_date,
+                            status__in=['pending', 'waiting'],
+                        ).exclude(pk=task.pk).select_related('painting_stage', 'order_item')
+                    )
+                    for t in source_tasks:
+                        ir = _get_item_ready_time(
+                            t.order_item_id, t.color_part, t.step_order, exclude_task_id=t.id
+                        )
+                        initial_entries.append((t, old_worker_id, ir))
 
-            temp_scheduler = PaintingScheduler([], jdatetime.date.fromgregorian(date=ref_date))
-            temp_scheduler._loaded = True
-            temp_scheduler.workers = workers
-            temp_scheduler.worker_schedule = {}
-
-            temp_scheduler.worker_schedule[worker_id] = []
-            for et in existing_tasks:
-                temp_scheduler.worker_schedule[worker_id].append(
-                    (et.scheduled_start, et.scheduled_end, et)
+                changes, task_objects = _run_cascade_schedule(
+                    ref_date,
+                    initial_entries,
+                    exclude_task_ids=[t.pk for t, _, _ in initial_entries],
                 )
-            temp_scheduler.worker_schedule[worker_id].append(
-                (bounds['break_start'], bounds['break_end'], None)
-            )
-            temp_scheduler.worker_schedule[worker_id].sort(key=lambda x: x[0])
 
-            duration = task.painting_stage.duration_minutes if task.painting_stage else DEFAULT_TASK_DURATION_MINUTES
-            start = temp_scheduler._find_gap(worker_id, duration, bounds, item_ready=None, prefer_early=True)
+                to_update = []
+                for pk, (wid, s, e) in changes.items():
+                    t = task_objects[pk]
+                    t.assigned_worker_id = wid
+                    t.scheduled_start = s
+                    t.scheduled_end = e
+                    to_update.append(t)
 
-            if start is None:
-                return {'ok': False, 'error': 'کارگر در این روز ظرفیت کافی ندارد'}
+                ProductionTask.objects.bulk_update(
+                    to_update, ['assigned_worker_id', 'scheduled_start', 'scheduled_end']
+                )
 
-            end = start + timedelta(minutes=duration)
+                # اگر تسک از کارگر دیگری منتقل شده، کارگر قبلی را هم بازنشانی کن
+                if old_worker_id and old_worker_id != worker_id:
+                    try:
+                        reschedule_worker_tasks_on_date(
+                            old_worker_id, jdatetime.date.fromgregorian(date=ref_date)
+                        )
+                    except Exception as e:
+                        logger.warning(f"خطا در بازنشانی کارگر منبع {old_worker_id}: {e}")
 
-            task.assigned_worker_id = worker_id
-            task.scheduled_start = start
-            task.scheduled_end = end
-            task.save(update_fields=['assigned_worker_id', 'scheduled_start', 'scheduled_end'])
+        except _CascadeCannotFit:
+            return {
+                'ok': False,
+                'error': 'زمان‌بندی این تسک در محدودهٔ روز کاری کارگر جا نمی‌شود. لطفاً زمان‌بندی خودکار را اجرا کنید.'
+            }
+        except _CascadeTooComplex:
+            return {
+                'ok': False,
+                'error': 'زنجیرهٔ جابه‌جایی‌های ناشی از این تغییر خیلی پیچیده است. لطفاً به‌صورت مرحله‌ای جابه‌جا کنید.'
+            }
+        except _CascadeCrossDayConflict as e:
+            return {
+                'ok': False,
+                'error': f'این جابه‌جایی باعث تداخل با مرحلهٔ بعدیِ همین قطعه در روز دیگری می‌شود (تسک {e.task.id}). لطفاً زمان‌بندی خودکار را دوباره اجرا کنید.'
+            }
 
-            temp_scheduler.worker_schedule[worker_id].append((start, end, task))
-            temp_scheduler.worker_schedule[worker_id].sort(key=lambda x: x[0])
-
+        final_start, final_end = changes[task.pk][1], changes[task.pk][2]
         return {
             'ok': True,
-            'scheduled_start': start.strftime('%H:%M'),
-            'scheduled_end': end.strftime('%H:%M'),
+            'scheduled_start': final_start.strftime('%H:%M'),
+            'scheduled_end': final_end.strftime('%H:%M'),
+            'shifted_tasks_count': len(changes) - 1,
         }
 
     except Exception as e:
@@ -1308,15 +1533,21 @@ def assign_task_to_worker(task_id, worker_id, target_date=None):
 
 def reschedule_worker_tasks_on_date(worker_id, target_date):
     """
-    پس از ویرایش دستی، تمام تسک‌های یک کارگر در یک روز را دوباره مرتب‌سازی و زمان‌بندی می‌کند.
-    ترتیب مراحل بر اساس order_item و step_order حفظ می‌شود.
+    پس از ویرایش دستی، تمام تسک‌های یک کارگر در یک روز را با همان موتور cascade
+    (درج + جابه‌جایی دومینویی) مورد استفاده در assign_task_to_worker، دوباره
+    مرتب‌سازی و زمان‌بندی می‌کند. ترتیب مراحل حفظ می‌شود و در صورت نیاز، تسک‌های
+    مرتبطِ همان قطعه روی کارگران دیگر نیز به‌صورت زنجیره‌ای هماهنگ می‌شوند.
+    عملیات کاملاً اتمیک است: در صورت شکست، هیچ تغییری اعمال نمی‌شود.
     """
     try:
         if not isinstance(target_date, jdatetime.date):
             return 0
 
+        if not is_working_day(target_date):
+            return 0
+
+        worker_id = int(worker_id)
         gregorian = target_date.togregorian()
-        bounds = _worker_day_bounds(gregorian, worker_id=worker_id)
 
         tasks = list(
             ProductionTask.objects.filter(
@@ -1330,49 +1561,54 @@ def reschedule_worker_tasks_on_date(worker_id, target_date):
         if not tasks:
             return 0
 
-        task_ids = [t.id for t in tasks]
-        ProductionTask.objects.filter(pk__in=task_ids).update(scheduled_start=None, scheduled_end=None)
+        try:
+            with transaction.atomic():
+                local_ready = {}
+                initial_entries = []
+                default_bounds = _worker_day_bounds(gregorian, worker_id=worker_id)
 
-        workers = _get_worker_cache()
-        worker_data = next((w for w in workers if w.get('user_id') == int(worker_id)), None)
-        if not worker_data:
+                for task in tasks:
+                    cursor_key = (task.order_item_id, task.color_part)
+
+                    db_ready = _get_item_ready_time(
+                        task.order_item_id, task.color_part, task.step_order, exclude_task_id=task.id
+                    )
+                    local = local_ready.get(cursor_key)
+                    candidates = [v for v in [db_ready, local] if v is not None]
+                    item_ready = max(candidates) if candidates else None
+
+                    initial_entries.append((task, worker_id, item_ready))
+
+                    duration = task.painting_stage.duration_minutes if task.painting_stage else DEFAULT_TASK_DURATION_MINUTES
+                    drying = task.painting_stage.drying_time_minutes if task.painting_stage else 0
+                    projected_start = item_ready or default_bounds['start']
+                    local_ready[cursor_key] = projected_start + timedelta(minutes=duration + drying)
+
+                # مرتب‌سازی بر اساس زمان آمادگی (item_ready) برای بهینه‌سازی قرارگیری در اسلات‌های اول روز
+                initial_entries.sort(key=lambda entry: entry[2] or default_bounds['start'])
+
+                changes, task_objects = _run_cascade_schedule(
+                    gregorian, initial_entries, exclude_task_ids=[t.id for t in tasks]
+                )
+
+                to_update = []
+                for task in tasks:
+                    if task.pk in changes:
+                        _, s, e = changes[task.pk]
+                        task.scheduled_start = s
+                        task.scheduled_end = e
+                        to_update.append(task)
+
+                if to_update:
+                    ProductionTask.objects.bulk_update(to_update, ['scheduled_start', 'scheduled_end'])
+
+                return len(to_update)
+
+        except (_CascadeCannotFit, _CascadeTooComplex, _CascadeCrossDayConflict) as e:
+            logger.warning(f"reschedule_worker_tasks_on_date: cascade ناموفق برای کارگر {worker_id} در {target_date}: {e}")
             return 0
 
-        temp_scheduler = PaintingScheduler([], target_date)
-        temp_scheduler._loaded = True
-        temp_scheduler.workers = workers
-        temp_scheduler.worker_schedule = {worker_id: []}
-        temp_scheduler.worker_schedule[worker_id].append((bounds['break_start'], bounds['break_end'], None))
-
-        item_cursors = {}
-        updated = []
-
-        for task in tasks:
-            duration = task.painting_stage.duration_minutes if task.painting_stage else DEFAULT_TASK_DURATION_MINUTES
-            cursor_key = (task.order_item_id, task.color_part)
-            item_ready = item_cursors.get(cursor_key)
-
-            start = temp_scheduler._find_gap(worker_id, duration, bounds, item_ready=item_ready, prefer_early=True)
-            if start is None:
-                continue
-
-            end = start + timedelta(minutes=duration)
-            task.scheduled_start = start
-            task.scheduled_end = end
-            updated.append(task)
-
-            temp_scheduler.worker_schedule[worker_id].append((start, end, task))
-            temp_scheduler.worker_schedule[worker_id].sort(key=lambda x: x[0])
-
-            drying = task.painting_stage.drying_time_minutes if task.painting_stage else 0
-            item_cursors[cursor_key] = end + timedelta(minutes=drying)
-
-        if updated:
-            ProductionTask.objects.bulk_update(updated, ['scheduled_start', 'scheduled_end'])
-
-        return len(updated)
-
-    except Exception as e:
+    except Exception:
         logger.exception("خطا در reschedule_worker_tasks_on_date")
         return 0
 
