@@ -527,8 +527,17 @@ class PaintingScheduler:
             worker_ids = [w['user_id'] for w in self.workers if w.get('user_id')]
             profiles_by_id = {}
             if worker_ids:
-                for p in WorkerProfile.objects.filter(user_id__in=worker_ids):
-                    profiles_by_id[p.user_id] = p
+                profiles = list(
+                    WorkerProfile.objects.filter(user_id__in=worker_ids)
+                    .prefetch_related('excluded_products', 'excluded_items')
+                )
+                profiles_by_id = {p.user_id: p for p in profiles}
+                for profile in profiles:
+                    excluded_ids = set(profile.excluded_products.values_list('id', flat=True))
+                    self._exclusion_map[profile.user_id] = excluded_ids
+                    self._excluded_items_map[profile.user_id] = set(
+                        profile.excluded_items.values_list('id', flat=True)
+                    )
             for wid in worker_ids:
                 self._worker_bounds[wid] = _worker_day_bounds(
                     gregorian, worker_id=wid, profile=profiles_by_id.get(wid)
@@ -568,18 +577,6 @@ class PaintingScheduler:
                 )
                 for order_id, worker_id in history_qs:
                     self._order_worker_history[order_id].add(worker_id)
-
-            # پیش‌بارگذاری استثناهای محصولات
-            if worker_ids:
-                profiles = WorkerProfile.objects.filter(
-                    user_id__in=worker_ids
-                ).prefetch_related('excluded_products', 'excluded_items')
-                for profile in profiles:
-                    excluded_ids = set(profile.excluded_products.values_list('id', flat=True))
-                    self._exclusion_map[profile.user_id] = excluded_ids
-                    self._excluded_items_map[profile.user_id] = set(
-                        profile.excluded_items.values_list('id', flat=True)
-                    )
 
             # NEW: پر کردن _item_workers از تسک‌های موجود در دیتابیس
             # فقط برای آیتم‌های مربوط به بچ فعلی
@@ -834,9 +831,6 @@ class PaintingScheduler:
             item_cursors = dict(self.initial_item_cursors)
 
             for task in self.tasks:
-                duration = task.painting_stage.duration_minutes if task.painting_stage else DEFAULT_TASK_DURATION_MINUTES
-                drying = task.painting_stage.drying_time_minutes if task.painting_stage else 0
-
                 cursor_key = (task.order_item_id, task.color_part)
                 item_ready = item_cursors.get(cursor_key)
 
@@ -1285,7 +1279,7 @@ def assign_task_to_worker(task_id, worker_id, target_date=None):
             )
             temp_scheduler.worker_schedule[worker_id].sort(key=lambda x: x[0])
 
-            duration = task.painting_stage.duration_minutes if task.painting_stage else 60
+            duration = task.painting_stage.duration_minutes if task.painting_stage else DEFAULT_TASK_DURATION_MINUTES
             start = temp_scheduler._find_gap(worker_id, duration, bounds, item_ready=None, prefer_early=True)
 
             if start is None:
@@ -1354,7 +1348,7 @@ def reschedule_worker_tasks_on_date(worker_id, target_date):
         updated = []
 
         for task in tasks:
-            duration = task.painting_stage.duration_minutes if task.painting_stage else 60
+            duration = task.painting_stage.duration_minutes if task.painting_stage else DEFAULT_TASK_DURATION_MINUTES
             cursor_key = (task.order_item_id, task.color_part)
             item_ready = item_cursors.get(cursor_key)
 
