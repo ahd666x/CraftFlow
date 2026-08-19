@@ -13,6 +13,8 @@ from django.db.models import Exists, OuterRef, Prefetch, Q, Max
 from django.contrib.auth.models import User
 from django.utils import timezone
 
+DEFAULT_TASK_DURATION_MINUTES = 60
+
 from .models import (
     ProductionTask,
     OrderItem,
@@ -63,20 +65,20 @@ def _get_worker_cache():
             ).select_related('user')
             for w in workers_qs:
                 user = w.user
-                skill_costs = {}
-                if isinstance(w.skill_costs, dict):
-                    skill_costs = {k: int(v) for k, v in w.skill_costs.items() if str(v).isdigit()}
+                skill_priority = {}
+                if isinstance(w.skill_priority, dict):
+                    skill_priority = {k: int(v) for k, v in w.skill_priority.items() if str(v).isdigit()}
                 _PAINT_WORKER_CACHE.append({
                     'user_id': user.id,
                     'skills': list(
                         {token.strip() for s in (w.skills or []) for token in str(s).split() if token.strip()}
                     ) if isinstance(w.skills, list) else [],
-                    'skill_costs': skill_costs,
+                    'skill_priority': skill_priority,
                     'full_name': f"{user.first_name} {user.last_name}".strip() or user.username,
                 })
             logger.debug(f"کش کارگران: {len(_PAINT_WORKER_CACHE)} کارگر بارگذاری شد.")
         except Exception as e:
-            logger.error(f"خطا در بارگذاری کش کارگران: {e}\n{traceback.format_exc()}")
+            logger.exception("خطا در بارگذاری کش کارگران")
             _PAINT_WORKER_CACHE = []
     return _PAINT_WORKER_CACHE if isinstance(_PAINT_WORKER_CACHE, list) else []
 
@@ -125,12 +127,13 @@ def _safe_eval(expr, allowed_names):
 def is_working_day(jalali_date):
     """
     تعیین می‌کند که آیا تاریخ جلالی داده‌شده یک روز کاری است.
-    روزهای جمعه (weekday==4) و تاریخ‌های موجود در جدول Holiday تعطیل محسوب می‌شوند.
+    روزهای جمعه (weekday==6) و تاریخ‌های موجود در جدول Holiday تعطیل محسوب می‌شوند.
+    در jdatetime: شنبه=0, یکشنبه=1, دوشنبه=2, سه‌شنبه=3, چهارشنبه=4, پنجشنبه=5, جمعه=6
     """
     if not isinstance(jalali_date, jdatetime.date):
         jalali_date = jdatetime.date.today()
     # جمعه
-    if jalali_date.weekday() == 4:  # جمعه در jdatetime
+    if jalali_date.weekday() == 6:  # جمعه در jdatetime
         return False
     # تعطیلات رسمی
     gregorian = jalali_date.togregorian()
@@ -158,7 +161,7 @@ def parse_size_string(size_str):
         return {}
     nums = re.findall(r'\d+', size_str)
     if len(nums) == 1:
-        return {'length': int(nums[0]), 'width': None}
+        return {'length': int(nums[0]), 'width': int(nums[0])}
     if len(nums) >= 2:
         return {'length': int(nums[0]), 'width': int(nums[1])}
     return {}
@@ -197,19 +200,23 @@ def update_barcode_size(original_barcode, new_length, new_width, order_item_id=N
     return barcode
 
 
+def _parse_default_colors(product):
+    default = product.default_colors or {}
+    if isinstance(default, str):
+        try:
+            default = json.loads(default) or {}
+        except (json.JSONDecodeError, TypeError):
+            default = {}
+    return default
+
+
 def get_unique_color_codes_for_item(item):
     codes = set()
     for c in item.ordercolor.all():
         if c.code and c.code != 'nan':
             codes.add(str(c.code))
     if not codes:
-        default = item.product.default_colors or {}
-        if isinstance(default, str):
-            try:
-                default = json.loads(default) or {}
-            except (json.JSONDecodeError, TypeError):
-                default = {}
-        for code in default.values():
+        for code in _parse_default_colors(item.product).values():
             if code and code != 'nan':
                 codes.add(str(code))
     return list(codes)
@@ -227,13 +234,7 @@ def get_item_color_assignments(item):
                     seen.add(key)
                     assignments.append(key)
     else:
-        default = item.product.default_colors or {}
-        if isinstance(default, str):
-            try:
-                default = json.loads(default) or {}
-            except (json.JSONDecodeError, TypeError):
-                default = {}
-        for part, code in default.items():
+        for part, code in _parse_default_colors(item.product).items():
             if code and code != 'nan':
                 key = (part, str(code))
                 if key not in seen:
@@ -297,7 +298,10 @@ def get_painting_ready_items_queryset(search=None, process_id=None):
             Q(order__user__last_name__icontains=search)
         )
     if process_id:
-        qs = qs.filter(paint_tasks__painting_stage__process_id=process_id).distinct()
+        qs = qs.filter(
+            Q(paint_tasks__painting_stage__process_id=process_id) |
+            Q(has_any=False)
+        ).distinct()
     return qs
 
 
@@ -361,13 +365,35 @@ def painting_nav_context():
 #   موتور زمان‌بندی نقاشی (Scheduler)
 # ===================================================================
 
-def _worker_day_bounds(gregorian_date):
+def _worker_day_bounds(gregorian_date, worker_id=None, profile=None):
     """مرزهای یک روز کاری (۸:۰۰ تا ۱۶:۳۰ با استراحت ۱۲:۳۰–۱۳:۳۰)"""
+    start_time = time(8, 0)
+    end_time = time(16, 30)
+    break_start_time = time(12, 30)
+    break_end_time = time(13, 30)
+
+    if profile is None and worker_id is not None:
+        try:
+            profile = WorkerProfile.objects.filter(user_id=worker_id).first()
+        except Exception:
+            logger.warning(f"خطا در خواندن پروفایل کارگر {worker_id}، استفاده از پیش‌فرض", exc_info=True)
+            profile = None
+
+    if profile:
+        if profile.work_start:
+            start_time = profile.work_start
+        if profile.work_end:
+            end_time = profile.work_end
+        if profile.break_start:
+            break_start_time = profile.break_start
+        if profile.break_end:
+            break_end_time = profile.break_end
+
     return {
-        'start': timezone.make_aware(datetime.combine(gregorian_date, time(8, 0))),
-        'end': timezone.make_aware(datetime.combine(gregorian_date, time(16, 30))),
-        'break_start': timezone.make_aware(datetime.combine(gregorian_date, time(12, 30))),
-        'break_end': timezone.make_aware(datetime.combine(gregorian_date, time(13, 30))),
+        'start': timezone.make_aware(datetime.combine(gregorian_date, start_time)),
+        'end': timezone.make_aware(datetime.combine(gregorian_date, end_time)),
+        'break_start': timezone.make_aware(datetime.combine(gregorian_date, break_start_time)),
+        'break_end': timezone.make_aware(datetime.combine(gregorian_date, break_end_time)),
     }
 
 
@@ -378,30 +404,34 @@ def _worker_day_bounds(gregorian_date):
 def _task_matches_rule(task, rule):
     """
     بررسی می‌کند که آیا یک تسک (ProductionTask) با قانون داده‌شده مطابقت دارد.
-    یک تسک با یک قانون مطابقت دارد اگر:
-      - اگر rule.painting_stage تنظیم شده باشد، مرحله تسک برابر آن باشد.
-      - اگر rule.process تنظیم شده باشد، روند مرحله تسک برابر آن باشد.
-      - اگر rule.color_codes تنظیم شده باشد، کد رنگ تسک در لیست باشد.
     """
-    # بررسی مرحله (اگر rule.painting_stage تنظیم شده باشد)
     if rule.painting_stage is not None:
         if task.painting_stage_id != rule.painting_stage_id:
             return False
 
-    # بررسی روند (اگر rule.process تنظیم شده باشد)
     if rule.process is not None:
         if not task.painting_stage or task.painting_stage.process_id != rule.process_id:
             return False
 
-    # بررسی کدهای رنگ (اگر rule.color_codes تنظیم شده باشد)
     if rule.color_codes:
         if not task.order_item or not task.color_part:
             return False
 
+        rule_color_codes = rule.color_codes
+        if isinstance(rule_color_codes, str):
+            try:
+                rule_color_codes = json.loads(rule_color_codes)
+            except Exception:
+                rule_color_codes = [rule_color_codes]
+        if not isinstance(rule_color_codes, list):
+            rule_color_codes = []
+
+        if not rule_color_codes:
+            return True
+
         item = task.order_item
         color_code = None
 
-        # ابتدا سعی می‌کنیم از Color (ordercolor) بخوانیم
         try:
             color_obj = item.ordercolor.filter(
                 part=task.color_part
@@ -411,19 +441,12 @@ def _task_matches_rule(task, rule):
         except Exception:
             pass
 
-        # در غیر این صورت از default_colors محصول استفاده کن
         if color_code is None:
-            default = item.product.default_colors or {}
-            if isinstance(default, str):
-                try:
-                    default = json.loads(default) or {}
-                except (json.JSONDecodeError, TypeError):
-                    default = {}
-            code = default.get(task.color_part)
+            code = _parse_default_colors(item.product).get(task.color_part)
             if code and code != 'nan':
                 color_code = str(code)
 
-        if color_code is None or color_code not in rule.color_codes:
+        if color_code is None or str(color_code) not in [str(c) for c in rule_color_codes]:
             return False
 
     return True
@@ -460,7 +483,6 @@ class PaintingScheduler:
         try:
             logger.debug(f"_load شروع شد برای {self.target_date}")
             gregorian = self.target_date.togregorian()
-            bounds = _worker_day_bounds(gregorian)
 
             self._all_day_tasks = list(
                 ProductionTask.objects.filter(
@@ -500,11 +522,25 @@ class PaintingScheduler:
                     self.worker_schedule[wid] = []
                     self.worker_load[wid] = 0
 
-            # افزودن بلوک ناهار
-            for wid in self.worker_schedule:
-                self.worker_schedule[wid].append(
-                    (bounds['break_start'], bounds['break_end'], None)
+            # محاسبه مرزهای per-worker (با ساعات کاری اختصاصی هر کارگر)
+            self._worker_bounds = {}
+            worker_ids = [w['user_id'] for w in self.workers if w.get('user_id')]
+            profiles_by_id = {}
+            if worker_ids:
+                for p in WorkerProfile.objects.filter(user_id__in=worker_ids):
+                    profiles_by_id[p.user_id] = p
+            for wid in worker_ids:
+                self._worker_bounds[wid] = _worker_day_bounds(
+                    gregorian, worker_id=wid, profile=profiles_by_id.get(wid)
                 )
+
+            # افزودن بلوک ناهار (per-worker)
+            for wid in self.worker_schedule:
+                b = self._worker_bounds.get(wid)
+                if b:
+                    self.worker_schedule[wid].append(
+                        (b['break_start'], b['break_end'], None)
+                    )
 
             # پر کردن برنامه از تسک‌های موجود
             for task in self._all_day_tasks:
@@ -534,45 +570,39 @@ class PaintingScheduler:
                     self._order_worker_history[order_id].add(worker_id)
 
             # پیش‌بارگذاری استثناهای محصولات
-            worker_ids = [w['user_id'] for w in self.workers if w.get('user_id')]
             if worker_ids:
                 profiles = WorkerProfile.objects.filter(
                     user_id__in=worker_ids
-                ).prefetch_related('excluded_products')
+                ).prefetch_related('excluded_products', 'excluded_items')
                 for profile in profiles:
                     excluded_ids = set(profile.excluded_products.values_list('id', flat=True))
                     self._exclusion_map[profile.user_id] = excluded_ids
-
-            # پر کردن _excluded_items_map
-            for w_id in worker_ids:
-                profile = WorkerProfile.objects.filter(user_id=w_id).first()
-                if profile:
-                    self._excluded_items_map[w_id] = set(
+                    self._excluded_items_map[profile.user_id] = set(
                         profile.excluded_items.values_list('id', flat=True)
                     )
-                else:
-                    self._excluded_items_map[w_id] = set()
 
             # NEW: پر کردن _item_workers از تسک‌های موجود در دیتابیس
-            # تسک‌های نقاشی که قبلاً worker دارند (فارغ از روز)
-            existing_item_workers = (
-                ProductionTask.objects
-                .filter(
-                    order_item__isnull=False,
-                    station_name='paint',
-                    assigned_worker__isnull=False,
+            # فقط برای آیتم‌های مربوط به بچ فعلی
+            item_ids_in_batch = {t.order_item_id for t in self.tasks if t.order_item_id}
+            if item_ids_in_batch:
+                existing_item_workers = (
+                    ProductionTask.objects
+                    .filter(
+                        order_item_id__in=item_ids_in_batch,
+                        station_name='paint',
+                        assigned_worker__isnull=False,
+                    )
+                    .values_list('order_item_id', 'assigned_worker_id')
                 )
-                .values_list('order_item_id', 'assigned_worker_id')
-            )
-            for item_id, wid in existing_item_workers:
-                if item_id and wid:
-                    self._item_workers[item_id].add(wid)
+                for item_id, wid in existing_item_workers:
+                    if item_id and wid:
+                        self._item_workers[item_id].add(wid)
 
             self._loaded = True
             logger.info(f"بارگذاری کامل شد: {len(self.tasks)} تسک جدید، {len(self._all_day_tasks)} تسک موجود")
 
         except Exception as e:
-            logger.error(f"خطا در _load: {e}\n{traceback.format_exc()}")
+            logger.exception("خطا در _load")
             raise
 
     def _is_task_excluded_for_worker(self, worker_id, product_id, order_item_id):
@@ -674,10 +704,10 @@ class PaintingScheduler:
 
         return info
 
-    def _select_worker(self, task, bounds, item_ready, preferred_worker_id=None):
+    def _select_worker(self, task, item_ready):
         try:
             skill = task.painting_stage.required_skill if task.painting_stage else 'painter'
-            duration = task.painting_stage.duration_minutes if task.painting_stage else 60
+            duration = task.painting_stage.duration_minutes if task.painting_stage else DEFAULT_TASK_DURATION_MINUTES
             is_short_task = duration <= 30
 
             product = task.order_item.product if task.order_item and task.order_item.product else None
@@ -691,23 +721,6 @@ class PaintingScheduler:
             rule_info = self._worker_rule_info(task)
 
             candidates = []
-
-            if preferred_worker_id is not None:
-                for w in self.workers:
-                    if w.get('user_id') == preferred_worker_id:
-                        if skill in (w.get('skills') or []):
-                            if rule_info[preferred_worker_id]['excluded']:
-                                break
-                            if rule_info[preferred_worker_id]['has_exclusive'] and not rule_info[preferred_worker_id]['matches_exclusive']:
-                                break
-                            if item_allowed_workers is not None and preferred_worker_id not in item_allowed_workers:
-                                if not rule_info[preferred_worker_id]['matches_exclusive']:
-                                    break
-                            if not self._is_task_excluded_for_worker(preferred_worker_id, product_id, task.order_item_id):
-                                slot = self._find_gap(preferred_worker_id, duration, bounds, item_ready, prefer_early=is_short_task)
-                                if slot is not None:
-                                    return preferred_worker_id, slot
-                        break
 
             for w in self.workers:
                 wid = w.get('user_id')
@@ -729,15 +742,19 @@ class PaintingScheduler:
                 if self._is_task_excluded_for_worker(wid, product_id, task.order_item_id):
                     continue
 
+                bounds = self._worker_bounds.get(wid)
+                if bounds is None:
+                    continue
+
                 slot = self._find_gap(wid, duration, bounds, item_ready, prefer_early=is_short_task)
                 if slot is None:
                     continue
 
                 load = self._get_worker_load(wid)
                 skill_priority = 0
-                if skill and isinstance(w.get('skill_costs'), dict):
+                if skill and isinstance(w.get('skill_priority'), dict):
                     try:
-                        skill_priority = int(w['skill_costs'].get(skill, 0))
+                        skill_priority = int(w['skill_priority'].get(skill, 0))
                     except (TypeError, ValueError):
                         skill_priority = 0
                 score = (slot - bounds['start']).total_seconds() / 60 + load * 50 - skill_priority * 50
@@ -748,7 +765,7 @@ class PaintingScheduler:
 
                 for rule in self.assignment_rules:
                     if rule.is_active and rule.worker.user_id == wid and _task_matches_rule(task, rule):
-                        if rule.rule_type == 'priority':
+                        if rule.rule_type in ('priority', 'exclusive'):
                             score -= rule.priority * 10
                             break
 
@@ -770,12 +787,12 @@ class PaintingScheduler:
             return selected_wid, selected_slot
 
         except Exception as e:
-            logger.error(f"خطا در _select_worker: {e}\n{traceback.format_exc()}")
+            logger.exception("خطا در _select_worker")
             raise
 
-    def _assign_task(self, task, worker_id, start, bounds):
+    def _assign_task(self, task, worker_id, start):
         try:
-            duration = task.painting_stage.duration_minutes if task.painting_stage else 60
+            duration = task.painting_stage.duration_minutes if task.painting_stage else DEFAULT_TASK_DURATION_MINUTES
             drying = task.painting_stage.drying_time_minutes if task.painting_stage else 0
             end = start + timedelta(minutes=duration)
 
@@ -800,7 +817,7 @@ class PaintingScheduler:
             return end + timedelta(minutes=drying)
 
         except Exception as e:
-            logger.error(f"خطا در _assign_task برای task {task.id}: {e}\n{traceback.format_exc()}")
+            logger.exception("خطا در _assign_task")
             raise
 
     def build(self):
@@ -811,26 +828,23 @@ class PaintingScheduler:
             if not self.tasks or not self.workers:
                 return 0
 
-            gregorian = self.target_date.togregorian()
-            bounds = _worker_day_bounds(gregorian)
-
             self.tasks.sort(key=lambda t: (t.order_item_id, t.step_order))
 
             scheduled = 0
             item_cursors = dict(self.initial_item_cursors)
 
             for task in self.tasks:
-                duration = task.painting_stage.duration_minutes if task.painting_stage else 60
+                duration = task.painting_stage.duration_minutes if task.painting_stage else DEFAULT_TASK_DURATION_MINUTES
                 drying = task.painting_stage.drying_time_minutes if task.painting_stage else 0
 
                 cursor_key = (task.order_item_id, task.color_part)
                 item_ready = item_cursors.get(cursor_key)
 
-                wid, start = self._select_worker(task, bounds, item_ready, preferred_worker_id=None)
+                wid, start = self._select_worker(task, item_ready)
                 if wid is None:
                     continue
 
-                next_ready = self._assign_task(task, wid, start, bounds)
+                next_ready = self._assign_task(task, wid, start)
                 item_cursors[cursor_key] = next_ready
                 scheduled += 1
 
@@ -840,7 +854,7 @@ class PaintingScheduler:
             return scheduled
 
         except Exception as e:
-            logger.error(f"خطا در build: {e}\n{traceback.format_exc()}")
+            logger.exception("خطا در build")
             raise
 
     def apply(self):
@@ -863,7 +877,7 @@ class PaintingScheduler:
             return len(tasks_to_update)
 
         except Exception as e:
-            logger.error(f"خطا در apply: {e}\n{traceback.format_exc()}")
+            logger.exception("خطا در apply")
             raise
 
     def schedule(self):
@@ -875,7 +889,7 @@ class PaintingScheduler:
             logger.info(f"زمان‌بندی کامل شد: {count} تسک")
             return count, getattr(self, '_remaining_item_cursors', {})
         except Exception as e:
-            logger.error(f"خطا در schedule: {e}\n{traceback.format_exc()}")
+            logger.exception("خطا در schedule")
             raise
 
 
@@ -1110,7 +1124,7 @@ def create_and_schedule_items_for_date(item_ids, target_date=None):
         }
 
     except Exception as e:
-        logger.error(f"خطا در create_and_schedule_items_for_date: {e}\n{traceback.format_exc()}")
+        logger.exception("خطا در create_and_schedule_items_for_date")
         raise
 
 
@@ -1137,13 +1151,14 @@ def repaint_item_ids_for_date(item_ids, target_date):
 #   تابع اختصاصی برای درگ‌اند‌دراپ (تخصیص دستی کارگر به تسک)
 # ===================================================================
 
-def assign_task_to_worker(task_id, worker_id):
+def assign_task_to_worker(task_id, worker_id, target_date=None):
     """
     تخصیص دستی یک تسک نقاشی به یک کارگر خاص (برای درگ‌اند‌دراپ در کانبان).
 
     پارامترها:
         task_id: شناسه تسک نقاشی
         worker_id: شناسه کاربر کارگر
+        target_date: تاریخ هدف برای زمان‌بندی (jdatetime.date یا None برای امروز)
 
     خروجی:
         dict: {'ok': True/False, 'error': str (در صورت خطا)}
@@ -1151,6 +1166,19 @@ def assign_task_to_worker(task_id, worker_id):
               {'ok': True, 'scheduled_start': '08:30', 'scheduled_end': '09:15'}
     """
     try:
+        target_date_obj = None
+        if target_date is not None:
+            if isinstance(target_date, jdatetime.date):
+                target_date_obj = target_date.togregorian()
+            elif isinstance(target_date, str):
+                try:
+                    y, m, d = map(int, target_date.split('-'))
+                    target_date_obj = jdatetime.date(y, m, d).togregorian()
+                except (ValueError, TypeError):
+                    target_date_obj = None
+
+        worker_id = int(worker_id)
+
         # ۱. دریافت تسک
         task = ProductionTask.objects.select_related(
             'painting_stage', 'order_item', 'order_item__product'
@@ -1167,7 +1195,7 @@ def assign_task_to_worker(task_id, worker_id):
 
         # ۲. دریافت کارگر مقصد از کش کارگران فعال
         workers = _get_worker_cache()
-        worker_data = next((w for w in workers if w['user_id'] == int(worker_id)), None)
+        worker_data = next((w for w in workers if w['user_id'] == worker_id), None)
 
         if not worker_data:
             return {'ok': False, 'error': 'کارگر یافت نشد یا غیرفعال است'}
@@ -1177,7 +1205,7 @@ def assign_task_to_worker(task_id, worker_id):
         if required_skill not in (worker_data.get('skills') or []):
             return {
                 'ok': False,
-                'error': f'کارگر مهارت "{required_skill}" را ندارد. مهارت‌های فعلی: {", ".join(worker_data.get("skills") or [])}'
+                'error': f'کارگر مهارت "{required_skill}" را ندارد. مهارت‌های فعلی: {", ".join((worker_data.get("skills") or []))}'
             }
 
         # ۳-ب. بررسی قوانین تخصیص
@@ -1203,25 +1231,24 @@ def assign_task_to_worker(task_id, worker_id):
             if not matches_exclusive:
                 return {'ok': False, 'error': 'این کارگر فقط مجاز به تسک‌های مطابق قانونش است.'}
 
-        # ۴. بررسی استثناهای محصول
-        product = task.order_item.product if task.order_item and task.order_item.product else None
-        if product:
-            worker_profile = WorkerProfile.objects.filter(user_id=worker_id).first()
+        # ۴. بررسی استثناهای محصول و آیتم (یک کوئری واحد)
+        worker_profile = WorkerProfile.objects.filter(user_id=worker_id).first()
+        if task.order_item and task.order_item.product:
+            product = task.order_item.product
             if worker_profile and worker_profile.excluded_products.filter(id=product.id).exists():
                 return {'ok': False, 'error': f'این کارگر برای محصول "{product.name}" ممنوع است'}
 
-        # ۴-ب. بررسی ممنوعیت آیتم خاص
-        if task.order_item_id:
-            worker_profile = WorkerProfile.objects.filter(user_id=worker_id).first()
-            if worker_profile and worker_profile.excluded_items.filter(id=task.order_item_id).exists():
-                return {
-                    'ok': False,
-                    'error': f'کارگر برای این آیتم (شماره {task.order_item_id}) ممنوع شده است.'
-                }
+        if task.order_item_id and worker_profile and worker_profile.excluded_items.filter(id=task.order_item_id).exists():
+            return {
+                'ok': False,
+                'error': f'کارگر برای این آیتم (شماره {task.order_item_id}) ممنوع شده است.'
+            }
 
         # ۵. محاسبه زمان با استفاده از منطق Scheduler
         if task.scheduled_start:
             ref_date = task.scheduled_start.date()
+        elif target_date_obj:
+            ref_date = target_date_obj
         else:
             ref_date = timezone.localdate()
 
@@ -1230,46 +1257,49 @@ def assign_task_to_worker(task_id, worker_id):
         if not is_working_day(ref_jalali):
             return {'ok': False, 'error': 'امروز تعطیل رسمی است'}
 
-        bounds = _worker_day_bounds(ref_date)
+        bounds = _worker_day_bounds(ref_date, worker_id=worker_id)
 
-        # ساختن یک Scheduler موقت برای استفاده از _find_gap
-        temp_scheduler = PaintingScheduler([], jdatetime.date.fromgregorian(date=ref_date))
-        temp_scheduler._loaded = True
-        temp_scheduler.workers = workers
-        temp_scheduler.worker_schedule = {}
-
-        # پر کردن worker_schedule با تسک‌های موجود این کارگر در آن روز (به‌غیر از خود تسک)
-        existing_tasks = ProductionTask.objects.filter(
-            assigned_worker_id=worker_id,
-            station_name='paint',
-            scheduled_start__date=ref_date,
-            scheduled_start__isnull=False,
-        ).exclude(pk=task_id)
-
-        temp_scheduler.worker_schedule[worker_id] = []
-        for et in existing_tasks:
-            temp_scheduler.worker_schedule[worker_id].append(
-                (et.scheduled_start, et.scheduled_end, et)
+        with transaction.atomic():
+            WorkerProfile.objects.select_for_update().filter(user_id=worker_id).first()
+            existing_tasks = list(
+                ProductionTask.objects.select_for_update().filter(
+                    assigned_worker_id=worker_id,
+                    station_name='paint',
+                    scheduled_start__date=ref_date,
+                    scheduled_start__isnull=False,
+                ).exclude(pk=task_id)
             )
-        # اضافه کردن بلوک ناهار
-        temp_scheduler.worker_schedule[worker_id].append(
-            (bounds['break_start'], bounds['break_end'], None)
-        )
-        temp_scheduler.worker_schedule[worker_id].sort(key=lambda x: x[0])
 
-        duration = task.painting_stage.duration_minutes if task.painting_stage else 60
-        start = temp_scheduler._find_gap(worker_id, duration, bounds, item_ready=None, prefer_early=True)
+            temp_scheduler = PaintingScheduler([], jdatetime.date.fromgregorian(date=ref_date))
+            temp_scheduler._loaded = True
+            temp_scheduler.workers = workers
+            temp_scheduler.worker_schedule = {}
 
-        if start is None:
-            return {'ok': False, 'error': 'کارگر در این روز ظرفیت کافی ندارد'}
+            temp_scheduler.worker_schedule[worker_id] = []
+            for et in existing_tasks:
+                temp_scheduler.worker_schedule[worker_id].append(
+                    (et.scheduled_start, et.scheduled_end, et)
+                )
+            temp_scheduler.worker_schedule[worker_id].append(
+                (bounds['break_start'], bounds['break_end'], None)
+            )
+            temp_scheduler.worker_schedule[worker_id].sort(key=lambda x: x[0])
 
-        end = start + timedelta(minutes=duration)
+            duration = task.painting_stage.duration_minutes if task.painting_stage else 60
+            start = temp_scheduler._find_gap(worker_id, duration, bounds, item_ready=None, prefer_early=True)
 
-        # ۷. ذخیره تغییرات
-        task.assigned_worker_id = worker_id
-        task.scheduled_start = start
-        task.scheduled_end = end
-        task.save(update_fields=['assigned_worker_id', 'scheduled_start', 'scheduled_end'])
+            if start is None:
+                return {'ok': False, 'error': 'کارگر در این روز ظرفیت کافی ندارد'}
+
+            end = start + timedelta(minutes=duration)
+
+            task.assigned_worker_id = worker_id
+            task.scheduled_start = start
+            task.scheduled_end = end
+            task.save(update_fields=['assigned_worker_id', 'scheduled_start', 'scheduled_end'])
+
+            temp_scheduler.worker_schedule[worker_id].append((start, end, task))
+            temp_scheduler.worker_schedule[worker_id].sort(key=lambda x: x[0])
 
         return {
             'ok': True,
@@ -1278,8 +1308,79 @@ def assign_task_to_worker(task_id, worker_id):
         }
 
     except Exception as e:
-        logger.error(f"خطا در assign_task_to_worker: {e}\n{traceback.format_exc()}")
+        logger.exception("خطا در assign_task_to_worker")
         return {'ok': False, 'error': f'خطای داخلی: {str(e)}'}
+
+
+def reschedule_worker_tasks_on_date(worker_id, target_date):
+    """
+    پس از ویرایش دستی، تمام تسک‌های یک کارگر در یک روز را دوباره مرتب‌سازی و زمان‌بندی می‌کند.
+    ترتیب مراحل بر اساس order_item و step_order حفظ می‌شود.
+    """
+    try:
+        if not isinstance(target_date, jdatetime.date):
+            return 0
+
+        gregorian = target_date.togregorian()
+        bounds = _worker_day_bounds(gregorian, worker_id=worker_id)
+
+        tasks = list(
+            ProductionTask.objects.filter(
+                station_name='paint',
+                assigned_worker_id=worker_id,
+                scheduled_start__date=gregorian,
+                status__in=['pending', 'waiting'],
+            ).select_related('painting_stage', 'order_item').order_by('order_item_id', 'step_order')
+        )
+
+        if not tasks:
+            return 0
+
+        task_ids = [t.id for t in tasks]
+        ProductionTask.objects.filter(pk__in=task_ids).update(scheduled_start=None, scheduled_end=None)
+
+        workers = _get_worker_cache()
+        worker_data = next((w for w in workers if w.get('user_id') == int(worker_id)), None)
+        if not worker_data:
+            return 0
+
+        temp_scheduler = PaintingScheduler([], target_date)
+        temp_scheduler._loaded = True
+        temp_scheduler.workers = workers
+        temp_scheduler.worker_schedule = {worker_id: []}
+        temp_scheduler.worker_schedule[worker_id].append((bounds['break_start'], bounds['break_end'], None))
+
+        item_cursors = {}
+        updated = []
+
+        for task in tasks:
+            duration = task.painting_stage.duration_minutes if task.painting_stage else 60
+            cursor_key = (task.order_item_id, task.color_part)
+            item_ready = item_cursors.get(cursor_key)
+
+            start = temp_scheduler._find_gap(worker_id, duration, bounds, item_ready=item_ready, prefer_early=True)
+            if start is None:
+                continue
+
+            end = start + timedelta(minutes=duration)
+            task.scheduled_start = start
+            task.scheduled_end = end
+            updated.append(task)
+
+            temp_scheduler.worker_schedule[worker_id].append((start, end, task))
+            temp_scheduler.worker_schedule[worker_id].sort(key=lambda x: x[0])
+
+            drying = task.painting_stage.drying_time_minutes if task.painting_stage else 0
+            item_cursors[cursor_key] = end + timedelta(minutes=drying)
+
+        if updated:
+            ProductionTask.objects.bulk_update(updated, ['scheduled_start', 'scheduled_end'])
+
+        return len(updated)
+
+    except Exception as e:
+        logger.exception("خطا در reschedule_worker_tasks_on_date")
+        return 0
 
 
 # ===================================================================

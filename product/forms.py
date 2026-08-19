@@ -633,12 +633,12 @@ class PaintingStageForm(forms.ModelForm):
 class WorkerProfileForm(forms.ModelForm):
     class Meta:
         model = WorkerProfile
-        fields = ['user', 'stage', 'skills', 'skill_costs', 'is_available', 'excluded_products']
+        fields = ['user', 'stage', 'skills', 'skill_priority', 'is_available', 'excluded_products']
         widgets = {
             'user': forms.Select(attrs={'class': 'form-select'}),
             'stage': forms.Select(attrs={'class': 'form-select'}),
             'skills': forms.Textarea(attrs={'class': 'form-control', 'rows': 2, 'placeholder': '["painter","sealer"]'}),
-            'skill_costs': forms.Textarea(attrs={'class': 'form-control', 'rows': 2, 'placeholder': '{"painter":3, "sealer":4}'}),
+            'skill_priority': forms.Textarea(attrs={'class': 'form-control', 'rows': 2, 'placeholder': '{"painter":3, "sealer":4}'}),
             'is_available': forms.CheckboxInput(attrs={'class': 'form-check-input'}),
             'excluded_products': forms.CheckboxSelectMultiple(),
         }
@@ -646,7 +646,7 @@ class WorkerProfileForm(forms.ModelForm):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.fields['skills'].required = False
-        self.fields['skill_costs'].required = False
+        self.fields['skill_priority'].required = False
 
     def clean_skills(self):
         import json
@@ -659,9 +659,9 @@ class WorkerProfileForm(forms.ModelForm):
         except (json.JSONDecodeError, TypeError):
             raise forms.ValidationError('فرمت JSON نامعتبر است. مثال: ["painter","sealer"]')
 
-    def clean_skill_costs(self):
+    def clean_skill_priority(self):
         import json
-        value = self.cleaned_data.get('skill_costs')
+        value = self.cleaned_data.get('skill_priority')
         if not value:
             return {}
         try:

@@ -8,6 +8,7 @@ from django.core.files.base import ContentFile
 from django.conf import settings
 import qrcode
 from decimal import Decimal
+from datetime import time
 
 
 
@@ -575,6 +576,11 @@ class ProductionTask(models.Model):
         verbose_name = "وظیفه تولید"
         verbose_name_plural = "وظایف تولید"
         ordering = ['order', 'part', 'step_order']
+        indexes = [
+            models.Index(fields=['station_name', 'scheduled_start']),
+            models.Index(fields=['assigned_worker', 'scheduled_start']),
+            models.Index(fields=['order_item', 'station_name', 'status']),
+        ]
 
     def __str__(self):
         target = self.part or self.order_item or "—"
@@ -637,8 +643,12 @@ class WorkerProfile(models.Model):
     user = models.OneToOneField(User, on_delete=models.CASCADE)
     stage = models.CharField(max_length=50, choices=STATION_CHOICES, verbose_name="مرحله کاری")
     skills = models.JSONField(default=list, blank=True, verbose_name="مهارت‌ها (لیست رشته‌ها)")
-    skill_costs = models.JSONField(default=dict, blank=True, verbose_name="اولویت ترجیحی مهارت‌ها")
+    skill_priority = models.JSONField(db_column='skill_costs', default=dict, blank=True, verbose_name="اولویت/میزان مهارت کارگر")
     is_available = models.BooleanField(default=True, verbose_name="فعال برای زمان‌بندی")
+    work_start = models.TimeField(default=time(8, 0), verbose_name="شروع کار")
+    work_end = models.TimeField(default=time(16, 30), verbose_name="پایان کار")
+    break_start = models.TimeField(default=time(12, 30), verbose_name="شروع استراحت")
+    break_end = models.TimeField(default=time(13, 30), verbose_name="پایان استراحت")
     excluded_products = models.ManyToManyField(
         'Product',
         blank=True,

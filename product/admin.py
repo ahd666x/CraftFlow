@@ -100,8 +100,8 @@ class WorkerProfileAdmin(admin.ModelAdmin):
         ('اطلاعات کاربر', {
             'fields': ('user', 'stage')
         }),
-        ('مهارت‌ها و هزینه‌ها', {
-            'fields': ('skills', 'skill_costs')
+        ('مهارت‌ها و اولویت‌ها', {
+            'fields': ('skills', 'skill_priority')
         }),
         ('تنظیمات زمان‌بندی', {
             'fields': ('is_available', 'excluded_products'),

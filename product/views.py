@@ -153,7 +153,7 @@ def painting_workers_api(request):
                 stage=data.get('stage', 'paint'),
                 is_available=data.get('is_available', True),
                 skills=data.get('skills', []),
-                skill_costs=data.get('skill_costs', {})
+                    skill_priority=data.get('skill_priority', data.get('skill_costs', {}))
             )
             return JsonResponse({'success': True, 'worker': worker_to_dict(worker)})
         except Exception as e:
@@ -180,7 +180,7 @@ def painting_worker_detail_api(request, worker_id):
             'stage': worker.stage,
             'stage_label': dict(STATION_CHOICES).get(worker.stage, worker.stage),
             'skills': worker.skills,
-            'skill_costs': worker.skill_costs,
+            'skill_priority': worker.skill_priority,
             'is_available': worker.is_available,
             'excluded_products_count': worker.excluded_products.count(),
             'excluded_items_count': worker.excluded_items.count(),
@@ -193,7 +193,7 @@ def painting_worker_detail_api(request, worker_id):
             worker.stage = data.get('stage', worker.stage)
             worker.is_available = data.get('is_available', worker.is_available)
             worker.skills = data.get('skills', worker.skills)
-            worker.skill_costs = data.get('skill_costs', worker.skill_costs)
+            worker.skill_priority = data.get('skill_priority', data.get('skill_costs', worker.skill_priority))
             worker.save()
             return JsonResponse({'success': True, 'worker': worker_to_dict(worker)})
         except Exception as e:
@@ -277,7 +277,7 @@ def worker_to_dict(worker):
         'username': worker.user.username,
         'stage_label': dict(STATION_CHOICES).get(worker.stage, worker.stage),
         'skills': worker.skills,
-        'skill_costs': worker.skill_costs,
+        'skill_priority': worker.skill_priority,
         'is_available': worker.is_available,
         'excluded_products_count': worker.excluded_products.count(),
         'excluded_items_count': worker.excluded_items.count(),
@@ -4046,7 +4046,25 @@ def painting_schedule_view(request):
     for t in tasks:
         tasks_by_worker.setdefault(t.assigned_worker_id, []).append(t)
 
+    unscheduled_tasks = list(
+        ProductionTask.objects.filter(
+            station_name='paint',
+            scheduled_start__isnull=True,
+            status__in=['pending', 'waiting'],
+            part__isnull=True,
+        ).select_related(
+            'order_item__order', 'order_item__product', 'order_item__product__category',
+            'painting_stage', 'assigned_worker',
+        ).prefetch_related('order_item__ordercolor').order_by('step_order')
+    )
+
     worker_columns = [{
+        'worker_id': '__unscheduled__',
+        'label': 'بدون برنامه‌ریزی',
+        'skills': [],
+        'tasks': unscheduled_tasks,
+        'is_unscheduled': True,
+    }] + [{
         'worker_id': wp.user_id,
         'label': wp.user.get_full_name() or wp.user.username,
         'skills': wp.skills or [],
@@ -4317,14 +4335,21 @@ def painting_assign_worker(request):
 
     task_id = request.POST.get('task_id')
     worker_id = request.POST.get('worker_id')
+    target_date = request.POST.get('target_date')
 
     if not task_id or not worker_id:
         return JsonResponse({'success': False, 'error': 'اطلاعات ناقص (task_id یا worker_id ارسال نشده)'})
 
     try:
-        result = assign_task_to_worker(task_id, worker_id)
+        result = assign_task_to_worker(task_id, worker_id, target_date=target_date)
 
         if result.get('ok'):
+            from .utils import parse_jalali_date, reschedule_worker_tasks_on_date
+            try:
+                td = parse_jalali_date(target_date) if target_date else jdatetime.date.today()
+            except Exception:
+                td = jdatetime.date.today()
+            reschedule_worker_tasks_on_date(int(worker_id), td)
             return JsonResponse({
                 'success': True,
                 'message': f"تسک به کارگر تخصیص یافت ({result.get('scheduled_start')} تا {result.get('scheduled_end')})",
@@ -4350,16 +4375,32 @@ def painting_assign_worker(request):
 def painting_unassign_worker(request):
     """حذف تخصیص کارگر از یک تسک — برای درگ به ستون «بدون تخصیص»"""
     from .models import ProductionTask
+    from .utils import reschedule_worker_tasks_on_date, parse_jalali_date
 
     if request.method == 'POST' and request.headers.get('X-Requested-With') == 'XMLHttpRequest':
         task_id = request.POST.get('task_id')
         if not task_id:
             return JsonResponse({'success': False, 'error': 'اطلاعات ناقص'})
         task = get_object_or_404(ProductionTask, pk=task_id, station_name='paint')
+        old_worker_id = task.assigned_worker_id
+        old_scheduled_start = task.scheduled_start
+        target_date = None
+        if old_scheduled_start:
+            try:
+                target_date = jdatetime.date.fromgregorian(date=old_scheduled_start.date())
+            except Exception:
+                target_date = None
         task.assigned_worker = None
         task.scheduled_start = None
         task.scheduled_end = None
         task.save()
+
+        if old_worker_id and target_date:
+            try:
+                reschedule_worker_tasks_on_date(old_worker_id, target_date)
+            except Exception as e:
+                logger.warning(f"خطا در بازنشانی تسک‌های کارگر {old_worker_id} در تاریخ {target_date}: {e}")
+
         return JsonResponse({'success': True})
 
     return JsonResponse({'success': False, 'error': 'درخواست نامعتبر'})
