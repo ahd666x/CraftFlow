@@ -366,7 +366,6 @@ def _insert_and_cascade_worker_day(timeline, bounds, new_start, new_end, new_tas
 
 
 def _maybe_enqueue_successor(t, new_end, ref_date, changes, task_objects, queue):
-    """اگر مرحلهٔ بعدیِ همین قطعه/رنگ به‌خاطر تغییر t دیگر معتبر نباشد، آن را به صف پردازش اضافه می‌کند."""
     if not (t.order_item_id and t.color_part):
         return
 
@@ -377,22 +376,28 @@ def _maybe_enqueue_successor(t, new_end, ref_date, changes, task_objects, queue)
     if not succ:
         return
 
+    for i, (q_task, q_wid, q_min) in enumerate(queue):
+        if q_task.pk == succ.pk:
+            if q_min is None or required_ready > q_min:
+                queue[i] = (q_task, q_wid, required_ready)
+            return
+
     if succ.pk in changes:
         succ_wid, succ_start, _ = changes[succ.pk]
     else:
         succ_wid, succ_start = succ.assigned_worker_id, succ.scheduled_start
 
-    if succ_start is None or succ_start >= required_ready:
-        return  # همچنان معتبر است
+    if succ_start is not None and succ_start >= required_ready:
+        return
 
-    if succ_start.date() != ref_date:
+    if succ_start is not None and succ_start.date() != ref_date:
         raise _CascadeCrossDayConflict(succ)
 
     task_objects.setdefault(succ.pk, succ)
     queue.append((succ, succ_wid, required_ready))
 
 
-def _run_cascade_schedule(gregorian_date, initial_entries, exclude_task_ids=None):
+def _run_cascade_schedule(gregorian_date, initial_entries, exclude_task_ids=None, allow_overtime=False):
     """
     موتور مشترک درج + جابه‌جایی دومینویی برای یک روز مشخص (تقویم میلادی).
 
@@ -400,6 +405,7 @@ def _run_cascade_schedule(gregorian_date, initial_entries, exclude_task_ids=None
                      برنامهٔ آن روز درج شوند.
     exclude_task_ids: شناسهٔ تسک‌هایی که نباید از حالت فعلیِ دیتابیس در timeline
                       بارگذاری شوند، چون خودشان در حال درج/جابه‌جایی مجددند.
+    allow_overtime: آیا در صورت نیاز زمانبندی خارج از ساعت کاری رسمی مجاز است؟
 
     خروجی: (changes, task_objects)
         changes: dict از task_id -> (worker_id, start, end)
@@ -428,7 +434,7 @@ def _run_cascade_schedule(gregorian_date, initial_entries, exclude_task_ids=None
 
     def get_bounds(wid):
         if wid not in bounds_cache:
-            bounds_cache[wid] = _worker_day_bounds(gregorian_date, worker_id=wid)
+            bounds_cache[wid] = _worker_day_bounds(gregorian_date, worker_id=wid, allow_overtime=allow_overtime)
         return bounds_cache[wid]
 
     for t in day_tasks:
@@ -471,12 +477,16 @@ def _run_cascade_schedule(gregorian_date, initial_entries, exclude_task_ids=None
         final_start, final_end = final_row[0], final_row[1]
         changes[cur_task.pk] = (wid, final_start, final_end)
 
-        _maybe_enqueue_successor(cur_task, final_end, gregorian_date, changes, task_objects, queue)
+        _maybe_enqueue_successor(
+            cur_task, final_end, gregorian_date, changes, task_objects, queue
+        )
 
         for pt in pushed:
             row = next(r for r in new_items if r[2] is pt)
             changes[pt.pk] = (wid, row[0], row[1])
-            _maybe_enqueue_successor(pt, row[1], gregorian_date, changes, task_objects, queue)
+            _maybe_enqueue_successor(
+                pt, row[1], gregorian_date, changes, task_objects, queue
+            )
 
     return changes, task_objects
 
@@ -586,7 +596,7 @@ def painting_nav_context():
 #   موتور زمان‌بندی نقاشی (Scheduler)
 # ===================================================================
 
-def _worker_day_bounds(gregorian_date, worker_id=None, profile=None):
+def _worker_day_bounds(gregorian_date, worker_id=None, profile=None, allow_overtime=False):
     """مرزهای یک روز کاری (۸:۰۰ تا ۱۶:۳۰ با استراحت ۱۲:۳۰–۱۳:۳۰)"""
     start_time = time(8, 0)
     end_time = time(16, 30)
@@ -603,12 +613,15 @@ def _worker_day_bounds(gregorian_date, worker_id=None, profile=None):
     if profile:
         if profile.work_start:
             start_time = profile.work_start
-        if profile.work_end:
+        if profile.work_end and not allow_overtime:
             end_time = profile.work_end
         if profile.break_start:
             break_start_time = profile.break_start
         if profile.break_end:
             break_end_time = profile.break_end
+
+    if allow_overtime:
+        end_time = time(23, 59)
 
     return {
         'start': timezone.make_aware(datetime.combine(gregorian_date, start_time)),
@@ -1366,7 +1379,7 @@ def repaint_item_ids_for_date(item_ids, target_date):
 #   تابع اختصاصی برای درگ‌اند‌دراپ (تخصیص دستی کارگر به تسک)
 # ===================================================================
 
-def assign_task_to_worker(task_id, worker_id, target_date=None):
+def assign_task_to_worker(task_id, worker_id, target_date=None, allow_overtime=False):
     """
     تخصیص پویا/دستی یک تسک نقاشی به یک کارگر (درگ‌اند‌دراپ در کانبان).
     در صورت نیاز، تسک‌های دیگر (همان کارگر یا کارگران دیگر که به لحاظ زنجیرهٔ مراحل
@@ -1451,34 +1464,22 @@ def assign_task_to_worker(task_id, worker_id, target_date=None):
 
         # ۶. زنجیرهٔ درج + جابه‌جایی دومینویی (از موتور مشترک استفاده می‌شود)
         old_worker_id = task.assigned_worker_id
+        item_ready = None
+        if task.order_item_id and task.color_part:
+            item_ready = _get_item_ready_time(
+                task.order_item_id, task.color_part, task.step_order, exclude_task_id=task.pk
+            )
+
+        initial_entries = [(task, worker_id, item_ready)]
+        exclude_ids = [task.pk]
+
         try:
             with transaction.atomic():
-                item_ready = None
-                if task.order_item_id and task.color_part:
-                    item_ready = _get_item_ready_time(
-                        task.order_item_id, task.color_part, task.step_order, exclude_task_id=task.pk
-                    )
-
-                initial_entries = [(task, worker_id, item_ready)]
-                if old_worker_id and old_worker_id != worker_id:
-                    source_tasks = list(
-                        ProductionTask.objects.filter(
-                            station_name='paint',
-                            assigned_worker_id=old_worker_id,
-                            scheduled_start__date=ref_date,
-                            status__in=['pending', 'waiting'],
-                        ).exclude(pk=task.pk).select_related('painting_stage', 'order_item')
-                    )
-                    for t in source_tasks:
-                        ir = _get_item_ready_time(
-                            t.order_item_id, t.color_part, t.step_order, exclude_task_id=t.id
-                        )
-                        initial_entries.append((t, old_worker_id, ir))
-
                 changes, task_objects = _run_cascade_schedule(
                     ref_date,
                     initial_entries,
-                    exclude_task_ids=[t.pk for t, _, _ in initial_entries],
+                    exclude_task_ids=exclude_ids,
+                    allow_overtime=allow_overtime,
                 )
 
                 to_update = []
@@ -1493,29 +1494,57 @@ def assign_task_to_worker(task_id, worker_id, target_date=None):
                     to_update, ['assigned_worker_id', 'scheduled_start', 'scheduled_end']
                 )
 
-                # اگر تسک از کارگر دیگری منتقل شده، کارگر قبلی را هم بازنشانی کن
+                source_tasks_count = 0
                 if old_worker_id and old_worker_id != worker_id:
-                    try:
-                        reschedule_worker_tasks_on_date(
-                            old_worker_id, jdatetime.date.fromgregorian(date=ref_date)
-                        )
-                    except Exception as e:
-                        logger.warning(f"خطا در بازنشانی کارگر منبع {old_worker_id}: {e}")
+                    source_tasks_count = reschedule_worker_tasks_on_date(
+                        old_worker_id,
+                        jdatetime.date.fromgregorian(date=ref_date),
+                        allow_overtime=allow_overtime,
+                    )
+
+                dest_tasks_count = reschedule_worker_tasks_on_date(
+                    worker_id,
+                    jdatetime.date.fromgregorian(date=ref_date),
+                    allow_overtime=allow_overtime,
+                )
 
         except _CascadeCannotFit:
-            return {
-                'ok': False,
-                'error': 'زمان‌بندی این تسک در محدودهٔ روز کاری کارگر جا نمی‌شود. لطفاً زمان‌بندی خودکار را اجرا کنید.'
-            }
+            if not allow_overtime:
+                try:
+                    with transaction.atomic():
+                        _run_cascade_schedule(
+                            ref_date,
+                            initial_entries,
+                            exclude_task_ids=exclude_ids,
+                            allow_overtime=True,
+                        )
+                except (_CascadeCannotFit, _CascadeTooComplex, _CascadeCrossDayConflict):
+                    return {
+                        'ok': False,
+                        'error': 'زمان‌بندی این تسک در این روز ممکن نیست.',
+                    }
+
+                return {
+                    'ok': False,
+                    'requires_overtime_confirmation': True,
+                    'error': 'این تغییر باعث خروج از ساعت کاری می‌شود. آیا ادامه می‌دهید؟',
+                }
+            else:
+                return {
+                    'ok': False,
+                    'error': 'زمان‌بندی این تسک حتی با اضافه‌کاری هم ممکن نیست.',
+                }
+
         except _CascadeTooComplex:
             return {
                 'ok': False,
-                'error': 'زنجیرهٔ جابه‌جایی‌های ناشی از این تغییر خیلی پیچیده است. لطفاً به‌صورت مرحله‌ای جابه‌جا کنید.'
+                'error': 'زنجیرهٔ جابه‌جایی‌های ناشی از این تغییر خیلی پیچیده است. لطفاً به‌صورت مرحله‌ای جابه‌جا کنید.',
             }
+
         except _CascadeCrossDayConflict as e:
             return {
                 'ok': False,
-                'error': f'این جابه‌جایی باعث تداخل با مرحلهٔ بعدیِ همین قطعه در روز دیگری می‌شود (تسک {e.task.id}). لطفاً زمان‌بندی خودکار را دوباره اجرا کنید.'
+                'error': f'این جابه‌جایی باعث تداخل با مرحلهٔ بعدیِ همین قطعه در روز دیگری می‌شود (تسک {e.task.id}).',
             }
 
         final_start, final_end = changes[task.pk][1], changes[task.pk][2]
@@ -1523,7 +1552,7 @@ def assign_task_to_worker(task_id, worker_id, target_date=None):
             'ok': True,
             'scheduled_start': final_start.strftime('%H:%M'),
             'scheduled_end': final_end.strftime('%H:%M'),
-            'shifted_tasks_count': len(changes) - 1,
+            'shifted_tasks_count': len(changes) - 1 + source_tasks_count + dest_tasks_count,
         }
 
     except Exception as e:
@@ -1531,7 +1560,7 @@ def assign_task_to_worker(task_id, worker_id, target_date=None):
         return {'ok': False, 'error': f'خطای داخلی: {str(e)}'}
 
 
-def reschedule_worker_tasks_on_date(worker_id, target_date):
+def reschedule_worker_tasks_on_date(worker_id, target_date, allow_overtime=False):
     """
     پس از ویرایش دستی، تمام تسک‌های یک کارگر در یک روز را با همان موتور cascade
     (درج + جابه‌جایی دومینویی) مورد استفاده در assign_task_to_worker، دوباره
@@ -1565,7 +1594,10 @@ def reschedule_worker_tasks_on_date(worker_id, target_date):
             with transaction.atomic():
                 local_ready = {}
                 initial_entries = []
-                default_bounds = _worker_day_bounds(gregorian, worker_id=worker_id)
+                default_bounds = _worker_day_bounds(
+                    gregorian, worker_id=worker_id, allow_overtime=allow_overtime
+                )
+                start_of_day = default_bounds['start']
 
                 for task in tasks:
                     cursor_key = (task.order_item_id, task.color_part)
@@ -1581,26 +1613,35 @@ def reschedule_worker_tasks_on_date(worker_id, target_date):
 
                     duration = task.painting_stage.duration_minutes if task.painting_stage else DEFAULT_TASK_DURATION_MINUTES
                     drying = task.painting_stage.drying_time_minutes if task.painting_stage else 0
-                    projected_start = item_ready or default_bounds['start']
-                    local_ready[cursor_key] = projected_start + timedelta(minutes=duration + drying)
 
-                # مرتب‌سازی بر اساس زمان آمادگی (item_ready) برای بهینه‌سازی قرارگیری در اسلات‌های اول روز
-                initial_entries.sort(key=lambda entry: entry[2] or default_bounds['start'])
+                    effective_ready = item_ready if (item_ready and item_ready > start_of_day) else start_of_day
+                    local_ready[cursor_key] = effective_ready + timedelta(minutes=duration + drying)
+
+                # مرتب‌سازی بر اساس زمان آمادگی واقعی
+                initial_entries.sort(key=lambda entry: entry[2] or start_of_day)
 
                 changes, task_objects = _run_cascade_schedule(
-                    gregorian, initial_entries, exclude_task_ids=[t.id for t in tasks]
+                    gregorian, initial_entries, exclude_task_ids=[t.id for t in tasks],
+                    allow_overtime=allow_overtime,
                 )
 
                 to_update = []
-                for task in tasks:
-                    if task.pk in changes:
-                        _, s, e = changes[task.pk]
-                        task.scheduled_start = s
-                        task.scheduled_end = e
-                        to_update.append(task)
+                for pk, (wid, s, e) in changes.items():
+                    t = task_objects.get(pk)
+                    if not t:
+                        continue
+
+                    if (t.assigned_worker_id, t.scheduled_start, t.scheduled_end) != (wid, s, e):
+                        t.assigned_worker_id = wid
+                        t.scheduled_start = s
+                        t.scheduled_end = e
+                        to_update.append(t)
 
                 if to_update:
-                    ProductionTask.objects.bulk_update(to_update, ['scheduled_start', 'scheduled_end'])
+                    ProductionTask.objects.bulk_update(
+                        to_update,
+                        ['assigned_worker_id', 'scheduled_start', 'scheduled_end']
+                    )
 
                 return len(to_update)
 

@@ -4336,12 +4336,13 @@ def painting_assign_worker(request):
     task_id = request.POST.get('task_id')
     worker_id = request.POST.get('worker_id')
     target_date = request.POST.get('target_date')
+    allow_overtime = request.POST.get('allow_overtime') == 'true'
 
     if not task_id or not worker_id:
         return JsonResponse({'success': False, 'error': 'اطلاعات ناقص (task_id یا worker_id ارسال نشده)'})
 
     try:
-        result = assign_task_to_worker(task_id, worker_id, target_date=target_date)
+        result = assign_task_to_worker(task_id, worker_id, target_date=target_date, allow_overtime=allow_overtime)
 
         if result.get('ok'):
             return JsonResponse({
@@ -4354,6 +4355,7 @@ def painting_assign_worker(request):
             return JsonResponse({
                 'success': False,
                 'error': result.get('error', 'خطای ناشناخته'),
+                'requires_overtime_confirmation': result.get('requires_overtime_confirmation', False),
             })
 
     except Exception as e:

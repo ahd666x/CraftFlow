@@ -19,20 +19,20 @@
 <div class="d-flex justify-content-between align-items-center mb-4">
     <h4 class="mb-0">
         <i class="bi bi-puzzle me-2"></i>
-        قوانین تخصیص کارگر نقاشی
+          تنظیمات 
     </h4>
     <button class="btn btn-modern" data-bs-toggle="modal" data-bs-target="#ruleModal" id="addRuleBtn">
-        <i class="bi bi-plus-circle"></i> افزودن قانون جدید
+        <i class="bi bi-plus-circle"></i> جدید
     </button>
 </div>
 
-<div class="alert alert-info" role="alert">
+{% comment %} <div class="alert alert-info" role="alert">
     <i class="bi bi-info-circle me-2"></i>
     هر قانون می‌تواند یکی از سه حالت زیر باشد:
     <strong>فقط اولویت‌دهی</strong> (ترجیح دادن کارگر)،
     <strong>محدودکننده</strong> (کارگر فقط تسک‌های مطابق را بگیرد) یا
     <strong>منع‌کننده</strong> (کارگر تسک‌های مطابق را نگیرد).
-</div>
+</div> {% endcomment %}
 
 <div class="card shadow-sm">
     <div class="card-body p-0">
@@ -45,7 +45,7 @@
                     <th>مرحله نقاشی</th>
                     <th>کدهای رنگ</th>
                     <th>روند</th>
-                    <th>نوع قانون</th>
+                    <th>نوع</th>
                     <th>وضعیت</th>
                     <th>عملیات</th>
                 </tr>
@@ -128,7 +128,7 @@
                 <tr>
                     <td colspan="9" class="text-center text-muted">
                         <i class="bi bi-emoji-frown me-2"></i>
-                        هیچ قانونی تعریف نشده است
+                          تعریف نشده است
                     </td>
                 </tr>
                 {% endfor %}
@@ -144,7 +144,7 @@
             <form id="ruleForm">
                 <input type="hidden" name="rule_id" id="ruleId">
                 <div class="modal-header">
-                    <h5 class="modal-title" id="modalTitle">افزودن قانون جدید</h5>
+                    <h5 class="modal-title" id="modalTitle">افزودن</h5>
                     <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
                 </div>
                 <div class="modal-body">
@@ -166,7 +166,7 @@
                             <option value="{{ s.id }}">{{ s.process.name }} - {{ s.name }} (مرحله {{ s.order }})</option>
                             {% endfor %}
                         </select>
-                        <small class="text-muted">اگر خالی بماند، برای همه مراحل اعمال می‌شود.</small>
+                        {% comment %} <small class="text-muted">اگر خالی بماند، برای همه مراحل اعمال می‌شود.</small> {% endcomment %}
                     </div>
 
                     <div class="mb-3">
@@ -177,35 +177,35 @@
                             <option value="{{ p.id }}">{{ p.name }}</option>
                             {% endfor %}
                         </select>
-                        <small class="text-muted">محدود کردن قانون به یک روند خاص.</small>
+                        {% comment %} <small class="text-muted">محدود کردن قانون به یک روند خاص.</small> {% endcomment %}
                     </div>
 
                     <div class="mb-3">
                         <label class="form-label">کدهای رنگ</label>
                         <input type="text" class="form-control" name="color_codes" id="ruleColors"
                                placeholder="مثال: 1,3,4 یا 9">
-                        <small class="text-muted">کدهای رنگ را با کاما جدا کنید. خالی = همه رنگ‌ها.</small>
+                        {% comment %} <small class="text-muted">کدهای رنگ را با کاما جدا کنید. خالی = همه رنگ‌ها.</small> {% endcomment %}
                     </div>
 
                     <div class="mb-3">
-                        <label class="form-label">نوع قانون</label>
+                        <label class="form-label">نوع</label>
                         <select class="form-select" name="rule_type" id="ruleType">
                             <option value="priority">فقط اولویت‌دهی</option>
                             <option value="exclusive">محدودکننده</option>
                             <option value="exclusion">منع‌کننده</option>
                         </select>
-                        <small class="text-muted">
+                        {% comment %} <small class="text-muted">
                             <strong>اولویت‌دهی:</strong> ترجیح دادن کارگر برای تسک‌های مطابق.<br>
                             <strong>محدودکننده:</strong> کارگر فقط تسک‌های مطابق را بگیرد.<br>
                             <strong>منع‌کننده:</strong> کارگر تسک‌های مطابق را نگیرد.
-                        </small>
+                        </small> {% endcomment %}
                     </div>
 
                     <div class="mb-3" id="priorityField">
                         <label class="form-label">اولویت (عدد بالاتر = اولویت بیشتر)</label>
                         <input type="number" class="form-control" name="priority" id="rulePriority"
                                value="100" min="1" max="9999">
-                        <small class="text-muted">فقط برای نوع «فقط اولویت‌دهی» تاثیر دارد.</small>
+                        {% comment %} <small class="text-muted">فقط برای نوع «فقط اولویت‌دهی» تاثیر دارد.</small> {% endcomment %}
                     </div>
 
                     <div class="form-check form-switch">
@@ -243,7 +243,7 @@ $(function() {
 
     $('#addRuleBtn').on('click', function() {
         $('#ruleId').val('');
-        $('#modalTitle').text('افزودن قانون جدید');
+        $('#modalTitle').text('جدید');
         $('#ruleWorker').val('');
         $('#ruleStage').val('');
         $('#ruleProcess').val('');
@@ -257,7 +257,7 @@ $(function() {
     $('.edit-rule').on('click', function() {
         const btn = $(this);
         $('#ruleId').val(btn.data('id'));
-        $('#modalTitle').text('ویرایش قانون');
+        $('#modalTitle').text('ویرایش');
         $('#ruleWorker').val(btn.data('worker'));
         $('#ruleStage').val(btn.data('stage') || '');
         $('#ruleProcess').val(btn.data('process') || '');
@@ -293,7 +293,7 @@ $(function() {
                 if (resp.success) {
                     window.location.reload();
                 } else {
-                    alert(resp.error || 'خطا در ذخیره قانون');
+                    alert(resp.error || 'خطا در ذخیره ');
                 }
             },
             error: function() { alert('خطای ارتباط با سرور'); }
@@ -301,7 +301,7 @@ $(function() {
     });
 
     $('.delete-rule').on('click', function() {
-        if (!confirm('آیا از حذف این قانون مطمئن هستید؟')) return;
+        if (!confirm('آیا از حذف این  مطمئن هستید؟')) return;
         const id = $(this).data('id');
         $.ajax({
             url: '{% url "painting_assignment_rules" %}',

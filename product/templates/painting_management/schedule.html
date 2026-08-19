@@ -321,7 +321,7 @@
                 </div>
             </div>
             {% empty %}
-            <div class="kanban-empty">تسک بدون برنامه‌ریزی</div>
+            <div class="kanban-empty"> بدون برنامه‌ریزی</div>
             {% endfor %}
         </div>
     </div>
@@ -495,35 +495,48 @@ $(function () {
                 });
             } else {
                 var workerId = col.dataset.workerId;
-                $.ajax({
-                    url: '{% url "painting_assign_worker" %}',
-                    method: 'POST',
-                    headers: {'X-Requested-With': 'XMLHttpRequest'},
-                    data: {
+                function doAssign(allowOvertime) {
+                    var postData = {
                         csrfmiddlewaretoken: csrf,
                         task_id: taskId,
                         worker_id: workerId,
                         target_date: '{{ selected_date_str }}'
-                    },
-                    success: function (data, status, xhr) {
-                        if (!data || !data.success) {
+                    };
+                    if (allowOvertime) {
+                        postData.allow_overtime = 'true';
+                    }
+                    $.ajax({
+                        url: '{% url "painting_assign_worker" %}',
+                        method: 'POST',
+                        headers: {'X-Requested-With': 'XMLHttpRequest'},
+                        data: postData,
+                        success: function (data, status, xhr) {
+                            if (!data || !data.success) {
+                                if (data && data.requires_overtime_confirmation) {
+                                    if (confirm(data.error || 'این تغییر باعث خروج از ساعت کاری می‌شود. آیا ادامه می‌دهید؟')) {
+                                        doAssign(true);
+                                    }
+                                    return;
+                                }
+                                var msg = 'خطا در تخصیص — صفحه را رفرش کنید';
+                                try {
+                                    var resp = JSON.parse(xhr.responseText);
+                                    if (resp && resp.error) msg = 'خطا: ' + resp.error;
+                                } catch (err) {}
+                                alert(msg);
+                            }
+                        },
+                        error: function (xhr) {
                             var msg = 'خطا در تخصیص — صفحه را رفرش کنید';
                             try {
                                 var resp = JSON.parse(xhr.responseText);
                                 if (resp && resp.error) msg = 'خطا: ' + resp.error;
-                            } catch (err) {}
+                            } catch (e) {}
                             alert(msg);
                         }
-                    },
-                    error: function (xhr) {
-                        var msg = 'خطا در تخصیص — صفحه را رفرش کنید';
-                        try {
-                            var resp = JSON.parse(xhr.responseText);
-                            if (resp && resp.error) msg = 'خطا: ' + resp.error;
-                        } catch (e) {}
-                        alert(msg);
-                    }
-                });
+                    });
+                }
+                doAssign(false);
             }
         });
     });

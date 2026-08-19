@@ -26,11 +26,14 @@ function showWorkerSelector(taskId, skill, csrfToken) {
 }
 
 // تخصیص کارگر انتخاب‌شده به تسک
-function assignWorkerToTask(taskId, workerId, csrfToken) {
+function assignWorkerToTask(taskId, workerId, csrfToken, allowOvertime) {
     var fd = new FormData();
     fd.append('csrfmiddlewaretoken', csrfToken);
     fd.append('task_id', taskId);
     fd.append('worker_id', workerId);
+    if (allowOvertime) {
+        fd.append('allow_overtime', 'true');
+    }
     fetch('/painting/assign-worker/', {
         method: 'POST',
         headers: { 'X-Requested-With': 'XMLHttpRequest' },
@@ -38,7 +41,15 @@ function assignWorkerToTask(taskId, workerId, csrfToken) {
     })
     .then(function (r) { return r.json(); })
     .then(function (data) {
-        if (data.success) { location.reload(); }
-        else { alert('خطا: ' + (data.error || 'نامشخص')); }
+        if (data.requires_overtime_confirmation) {
+            if (confirm(data.error)) {
+                assignWorkerToTask(taskId, workerId, csrfToken, true);
+            }
+        } else if (data.success) {
+            location.reload();
+        }
+        else {
+            alert('خطا: ' + (data.error || 'نامشخص'));
+        }
     });
 }
