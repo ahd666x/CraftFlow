@@ -823,11 +823,12 @@ class PaintingScheduler:
                         station_name='paint',
                         assigned_worker__isnull=False,
                     )
-                    .values_list('order_item_id', 'assigned_worker_id')
+                    .values_list('order_item_id', 'color_part', 'assigned_worker_id')
                 )
-                for item_id, wid in existing_item_workers:
+                for item_id, color_part, wid in existing_item_workers:
                     if item_id and wid:
-                        self._item_workers[item_id].add(wid)
+                        key = (item_id, color_part or '')
+                        self._item_workers[key].add(wid)
 
             self._loaded = True
             logger.info(f"بارگذاری کامل شد: {len(self.tasks)} تسک جدید، {len(self._all_day_tasks)} تسک موجود")
@@ -945,14 +946,17 @@ class PaintingScheduler:
             product_id = product.id if product else None
 
             item_id = task.order_item_id
+            color_part = task.color_part or ''
+            item_key = (item_id, color_part)
             item_allowed_workers = None
-            if item_id and len(self._item_workers.get(item_id, set())) >= 2:
-                item_allowed_workers = self._item_workers.get(item_id, set())
+            if item_id and len(self._item_workers.get(item_key, set())) >= 2:
+                item_allowed_workers = self._item_workers.get(item_key, set())
 
             rule_info = self._worker_rule_info(task)
 
             candidates = []
 
+            # تمرین اول: با قید کارگران چسبنده (item_allowed_workers)
             for w in self.workers:
                 wid = w.get('user_id')
                 if wid is None:
@@ -1007,6 +1011,63 @@ class PaintingScheduler:
 
                 candidates.append((score, wid, slot))
 
+            # اگر هیچ کاندیدی پیدا نشد و قید item_allowed_workers فعال بوده،
+            # تمرین دوم بدون این قید (fallback) تا تسک گیر نکند
+            if not candidates and item_allowed_workers is not None:
+                logger.warning(
+                    f"تسک {task.id} با قید کارگر چسبنده ({len(item_allowed_workers)} کارگر) "
+                    f"هیچ کارگر مناسبی پیدا نکرد. تلاش مجاز بدون قید..."
+                )
+                for w in self.workers:
+                    wid = w.get('user_id')
+                    if wid is None:
+                        continue
+
+                    if rule_info[wid]['excluded']:
+                        continue
+                    if rule_info[wid]['has_exclusive'] and not rule_info[wid]['matches_exclusive']:
+                        continue
+
+                    if skill not in (w.get('skills') or []):
+                        continue
+
+                    if self._is_task_excluded_for_worker(wid, product_id, task.order_item_id):
+                        continue
+
+                    bounds = self._worker_bounds.get(wid)
+                    if bounds is None:
+                        continue
+
+                    slot = self._find_gap(wid, duration, bounds, item_ready, prefer_early=is_short_task)
+                    if slot is None:
+                        continue
+
+                    load = self._get_worker_load(wid)
+                    skill_priority = 0
+                    if skill and isinstance(w.get('skill_priority'), dict):
+                        try:
+                            skill_priority = int(w['skill_priority'].get(skill, 0))
+                        except (TypeError, ValueError):
+                            skill_priority = 0
+                    score = (slot - bounds['start']).total_seconds() / 60 + load * 50 - skill_priority * 50
+
+                    existing_worker_ids = self._order_worker_history.get(task.order_id, set())
+                    if wid in existing_worker_ids:
+                        score -= 200
+
+                    for rule in self.assignment_rules:
+                        if rule.is_active and rule.worker.user_id == wid and _task_matches_rule(task, rule):
+                            if rule.rule_type in ('priority', 'exclusive'):
+                                score -= rule.priority * 10
+                                break
+
+                    if is_short_task:
+                        gap_size = self._get_gap_size(wid, slot, bounds)
+                        if gap_size and gap_size <= duration * 2:
+                            score -= 40
+
+                    candidates.append((score, wid, slot))
+
             if not candidates:
                 return None, None
 
@@ -1043,7 +1104,8 @@ class PaintingScheduler:
 
             # NEW: بروزرسانی _item_workers در حافظه
             if task.order_item_id:
-                self._item_workers[task.order_item_id].add(worker_id)
+                key = (task.order_item_id, task.color_part or '')
+                self._item_workers[key].add(worker_id)
 
             return end + timedelta(minutes=drying)
 
