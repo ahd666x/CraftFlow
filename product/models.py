@@ -122,8 +122,6 @@ class Order(models.Model):
             parse_size_string,
             apply_size_adjustment,
             update_barcode_size,
-            get_painting_process_for_color,
-            get_item_color_assignments,
         )
         from .models import ProductionTask
 
@@ -207,24 +205,8 @@ class Order(models.Model):
                             )
                         )
 
-            # Phase 2: paint tasks — یک زنجیره‌ی نقاشی مستقل برای هر (بخش, کد رنگ)
-            for item in self.items.all():
-                for part_name, color_code in get_item_color_assignments(item):
-                    painting_process = get_painting_process_for_color(color_code)
-                    if not painting_process:
-                        continue
-
-                    base_step = current_step
-                    create_paint_tasks(
-                        tasks_list=tasks_to_create,
-                        order=self,
-                        quantity=item.quantity,
-                        process=painting_process,
-                        base_step=base_step,
-                        order_item=item,
-                        color_part=part_name,
-                    )
-                    current_step = base_step + painting_process.stages.count()
+            # تسک‌های نقاشی فقط از طریق assign_painting_process / painting_assign_process در views.py
+            # وقتی آیتم آماده‌ی نقاشی شد، ساخته می‌شوند؛ نه در این لحظه‌ی تولید سفارش.
 
             if tasks_to_create:
                 ProductionTask.objects.bulk_create(tasks_to_create)

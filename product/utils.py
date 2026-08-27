@@ -1125,13 +1125,25 @@ class PaintingScheduler:
 
             scheduled = 0
             item_cursors = dict(self.initial_item_cursors)
+            blocked_chains = set()
 
             for task in self.tasks:
                 cursor_key = (task.order_item_id, task.color_part)
+
+                if cursor_key in blocked_chains:
+                    continue
+
                 item_ready = item_cursors.get(cursor_key)
 
                 wid, start = self._select_worker(task, item_ready)
                 if wid is None:
+                    if cursor_key not in blocked_chains:
+                        logger.warning(
+                            f"مرحله {task.painting_stage.name if task.painting_stage else task.id} "
+                            f"برای آیتم {task.order_item_id} (بخش رنگی: {task.color_part}) "
+                            f"زمان‌بندی نشد؛ بقیه‌ی مراحل این زنجیره در این اجرا رد می‌شوند."
+                        )
+                    blocked_chains.add(cursor_key)
                     continue
 
                 next_ready = self._assign_task(task, wid, start)
