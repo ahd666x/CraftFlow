@@ -38,12 +38,12 @@ urlpatterns = [
     path('management/orders/<int:order_id>/tasks/', views.admin_order_tasks, name='admin_order_tasks'),
     path('management/task/<int:task_id>/delete/', views.admin_delete_task, name='admin_delete_task'),
     path('management/tasks/', views.admin_tasks_management, name='admin_tasks_management'),
-    path('management/tasks/manual/create/', views.create_manual_item_task, name='create_manual_item_task'),
     path('archive/upload/', views.archive_upload, name='archive_upload'),
     path('archive/delete-file/', views.archive_delete_file, name='archive_delete_file'),
     path('archive/download/<str:archive_type>/<str:filename>/', views.archive_download, name='archive_download'),
     path('', views.dashboard, name='dashboard'),
     path('orders/', views.order_list, name='order_list'),
+    path('orders/<int:order_id>/items-expand/', views.order_items_expand_ajax, name='order_items_expand_ajax'),
     path('orderlist/', views.order_item_list, name='order_item_list'),
     path('orders/create/', views.create_order, name='create_order'),
     path('orders/<int:order_id>/item/', views.add_item, name='add_item'),
@@ -59,6 +59,7 @@ urlpatterns = [
     path('scan/<int:pk>/', views.scan_qr, name='scan_qr'),
 
     path('reports/shipped/', views.report_shipped, name='report_shipped'),
+    path('reports/ready-to-ship/', views.report_ready_to_ship, name='report_ready_to_ship'),
     # path('reports/shipped/print/', views.delivery_note_print, name='delivery_note_print'),
 
     
@@ -93,8 +94,8 @@ urlpatterns = [
     path('cnc/download/<str:barcode>/', views.download_cnc_file, name='download_cnc_file'),
     path('scan/part/dr/', views.scan_part_dr, name='scan_part_dr'),
     path('dr/download/<str:barcode>/', views.download_dr_file, name='download_dr_file'),
-    path('tasks/manual/<int:task_id>/progress/', views.manual_task_mark_progress, name='manual_task_mark_progress'),
     path('tasks/<int:task_id>/undo-scan/', views.undo_scan, name='undo_scan'),
+    path('tasks/<int:task_id>/mark-done/', views.mark_task_done, name='mark_task_done'),
     path('scan/item-tasks/<int:item_id>/', views.scan_item_tasks_ajax, name='scan_item_tasks_ajax'),
 
     # فروشگاه مشتریان

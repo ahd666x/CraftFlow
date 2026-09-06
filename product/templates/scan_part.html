@@ -20,11 +20,10 @@
                         <div class="mb-3">
                             <label for="barcode" class="form-label fw-bold">بارکد را وارد کنید:</label>
                             <input type="text" name="barcode" id="barcode"
-                                   class="form-control form-control-lg text-center"
-                                   placeholder="مثال: k.1.1840x1220.item9" autofocus autocomplete="off">
+                                   class="form-control form-control-lg text-center"autofocus autocomplete="off">
                         </div>
                         <div class="d-grid">
-                            <button type="submit" class="btn btn-success btn-lg">ثبت و تکمیل</button>
+                            <button type="submit" class="btn btn-success btn-lg">ثبت</button>
                         </div>
                     </form>
                     <div id="scan-feedback" class="mt-3"></div>
@@ -44,28 +43,10 @@
         </div>
 
         <div class="col-lg-7">
-            <div id="item-progress-card" class="card shadow mb-3" style="display:none;">
-                <div class="card-header bg-info text-white">
-                    <h5 class="mb-0">پیشرفت آیتم</h5>
-                </div>
-                <div class="card-body">
-                    <div class="d-flex justify-content-between mb-1">
-                        <span id="item-product-name" class="fw-bold"></span>
-                        <span id="item-order-number" class="text-muted"></span>
-                    </div>
-                    <div class="progress" style="height: 20px;">
-                        <div id="item-progress-bar" class="progress-bar" role="progressbar" style="width:0%"></div>
-                    </div>
-                    <div class="d-flex justify-content-between mt-1">
-                        <small id="item-progress-text" class="text-muted"></small>
-                        <small id="item-progress-percent" class="text-muted"></small>
-                    </div>
-                </div>
-            </div>
-
             <div id="item-tasks-card" class="card shadow mb-3" style="display:none;">
                 <div class="card-header bg-secondary text-white">
-                    <h5 class="mb-0">قطعات این آیتم در این ایستگاه</h5>
+                    <h5 id="item-order-number"  class="mb-0"></h5>
+                    <small id="item-order-number" class="text-white"></small>
                 </div>
                 <div class="card-body p-0">
                     <div class="table-responsive">
@@ -74,7 +55,6 @@
                                 <tr>
                                     <th>نام قطعه</th>
                                     <th>تعداد</th>
-                                    <th>وضعیت</th>
                                     <th>عملیات</th>
                                 </tr>
                             </thead>
@@ -91,27 +71,32 @@
         <div class="col-12">
             <div class="card shadow">
                 <div class="card-header bg-warning text-dark">
-                    <h5 class="mb-0">آیتم‌های آماده انجام در این ایستگاه</h5>
+                    <h5 class="mb-0">آماده انجام</h5>
                 </div>
                 <div class="card-body p-0">
                     <table class="table table-hover align-middle mb-0">
                         <thead class="table-light">
                             <tr>
                                 <th>سفارش</th>
-                                <th>مشتری</th>
+                                {% comment %} <th>مشتری</th> {% endcomment %}
                                 <th>نماینده</th>
                                 <th>محصول</th>
                                 <th>تعداد کل</th>
-                                <th>باقیمانده در این ایستگاه</th>
+                                <th>باقیمانده</th>
                             </tr>
                         </thead>
                         <tbody>
                             {% for row in items_with_progress %}
                             <tr class="item-select-row" style="cursor:pointer;" data-item-id="{{ row.item.id }}">
                                 <td>{{ row.order.id }}/{{ row.item.id }}</td>
-                                <td>{{ row.order.customer.name }}</td>
+                                {% comment %} <td>{{ row.order.customer.name }}</td> {% endcomment %}
                                 <td>{{ row.order.user.get_full_name|default:row.order.user.username }}</td>
-                                <td>{{ row.item.product.name }}</td>
+                                <td>
+                                    {% if row.item.product.category %}
+                                        {{ row.item.product.category.name }} -
+                                    {% endif %}
+                                    {{ row.item.product.name }}
+                                </td>
                                 <td>{{ row.item.quantity }}</td>
                                 <td><span class="badge bg-secondary">{{ row.remaining_parts }} از {{ row.total_parts }}</span></td>
                             </tr>
@@ -128,6 +113,34 @@
 
 <script>
 let lastScannedTaskId = null;
+const workerStage = '{{ worker_stage|escapejs }}';
+const SELECTED_ITEM_KEY = 'selected_scan_part_item_id';
+
+function saveSelectedItemId(itemId) {
+    if (itemId) {
+        localStorage.setItem(SELECTED_ITEM_KEY, itemId);
+    } else {
+        localStorage.removeItem(SELECTED_ITEM_KEY);
+    }
+}
+
+function getSelectedItemId() {
+    return localStorage.getItem(SELECTED_ITEM_KEY);
+}
+
+function clearSelectedItemId() {
+    localStorage.removeItem(SELECTED_ITEM_KEY);
+}
+
+function updateItemOrderHeader(orderId, itemId) {
+    const el = document.getElementById('item-order-number');
+    if (!el) return;
+    if (orderId && itemId) {
+        el.textContent = 'سفارش ' + orderId + ' | آیتم ' + itemId;
+    } else {
+        el.textContent = '';
+    }
+}
 
 function renderItemTasks(itemTasks) {
     const tbody = document.getElementById('item-tasks-body');
@@ -148,42 +161,43 @@ function renderItemTasks(itemTasks) {
         tr.className = rowClass;
 
         let actions = '';
-        if (t.is_manual_item_task) {
-            actions = `
-                <a href="/media/${t.manual_reference_file}" class="btn btn-sm btn-outline-primary" download>
-                    <i class="fas fa-download"></i> دانلود فایل مرجع
-                </a>
-                <button class="btn btn-sm btn-outline-success ms-1 manual-progress-btn" data-task-id="${t.task_id}">
-                    <i class="fas fa-check"></i> انجام شد
-                </button>
-            `;
-        } else {
-            const downloadUrl = workerStage === 'cnc' ? `/cnc/download/${encodeURIComponent(t.label)}/` : `/dr/download/${encodeURIComponent(t.label)}/`;
-            actions = `
-                <a href="${downloadUrl}" class="btn btn-sm btn-outline-primary" download>
-                    <i class="fas fa-download"></i> دانلود
-                </a>
-            `;
-        }
+        const downloadUrl = workerStage === 'cnc' ? `/cnc/download/${encodeURIComponent(t.label)}/` : `/dr/download/${encodeURIComponent(t.label)}/`;
+        actions = `
+            <a href="${downloadUrl}" class="btn btn-sm btn-outline-primary" download>
+                <i class="fas fa-download"></i> دانلود
+            </a>
+            <button class="btn btn-sm btn-outline-success ms-1 mark-done-btn" data-task-id="${t.task_id}">
+                <i class="fas fa-check"></i> انجام شد
+            </button>
+        `;
 
-        const progressBar = (t.completed_quantity > 0 && t.completed_quantity < t.quantity)
-            ? `<div class="progress mt-1" style="height:8px;"><div class="progress-bar" style="width:${Math.round(t.completed_quantity/t.quantity*100)}%"></div></div><small>${t.completed_quantity} از ${t.quantity}</small>`
-            : '';
+        const total = Math.max(t.quantity, 1);
+        const done = Math.max(t.completed_quantity, 0);
+        const pct = Math.min(Math.round((done / total) * 100), 100);
+        const progressBar = `
+            <table style="border-collapse:separate; border-spacing:4px 0;">
+                <tr>
+                    <td style="width:100px; height:14px; background:#e9ecef; border-radius:7px; padding:0;">
+                        <div style="width:${pct}%; height:100%; background:#0d6efd; border-radius:7px;"></div>
+                    </td>
+                    <td style="white-space:nowrap;"><small>${done} از ${t.quantity}</small></td>
+                </tr>
+            </table>
+        `;
 
         tr.innerHTML = `
             <td>${t.label}</td>
-            <td><span class="badge bg-warning text-dark">${t.quantity}</span> ${progressBar}</td>
-            <td><span class="badge ${t.status === 'done' ? 'bg-success' : 'bg-secondary'}">${t.status}</span></td>
+            <td>${progressBar}</td>
             <td>${actions}</td>
         `;
         tbody.appendChild(tr);
     });
 
-    document.querySelectorAll('.manual-progress-btn').forEach(function(btn) {
+    document.querySelectorAll('.mark-done-btn').forEach(function(btn) {
         btn.addEventListener('click', function(e) {
             e.preventDefault();
             const tid = this.getAttribute('data-task-id');
-            fetch(`/tasks/manual/${tid}/progress/`, {
+            fetch(`/tasks/${tid}/mark-done/`, {
                 method: 'POST',
                 headers: {'X-CSRFToken': '{{ csrf_token }}', 'X-Requested-With': 'XMLHttpRequest'},
             }).then(r => r.json()).then(data => {
@@ -198,32 +212,7 @@ function renderItemTasks(itemTasks) {
 }
 
 function refreshCurrentView() {
-    const form = document.getElementById('scan-form');
-    fetch(form.action, {
-        method: 'GET',
-        headers: {'X-Requested-With': 'XMLHttpRequest'},
-    }).then(r => r.json()).then(data => {
-        if (data.item_tasks && data.item_tasks.length > 0) {
-            renderItemTasks(data.item_tasks);
-            updateItemCard(data, data.order_id, data.item_tasks[0].order_item_id);
-        }
-    }).catch(() => {});
-}
-
-function updateItemCard(data, orderId, itemId) {
-    if (!data || !data.item_tasks || data.item_tasks.length === 0) {
-        document.getElementById('item-progress-card').style.display = 'none';
-        document.getElementById('item-tasks-card').style.display = 'none';
-        return;
-    }
-    document.getElementById('item-progress-card').style.display = 'block';
-    document.getElementById('item-order-number').textContent = 'سفارش ' + orderId + ' | آیتم ' + itemId;
-    const total = data.item_tasks.reduce((s, t) => s + t.quantity, 0);
-    const done = data.item_tasks.filter(t => t.completed_quantity >= t.quantity).length;
-    const pct = total > 0 ? Math.round(done / total * 100) : 0;
-    document.getElementById('item-progress-bar').style.width = pct + '%';
-    document.getElementById('item-progress-text').textContent = `${done} از ${total} قطعه در این ایستگاه تمام شد`;
-    document.getElementById('item-progress-percent').textContent = pct + '%';
+    location.reload();
 }
 
 function handleScanResponse(data) {
@@ -235,7 +224,7 @@ function handleScanResponse(data) {
         }
         if (data.item_tasks && data.item_tasks.length > 0) {
             renderItemTasks(data.item_tasks);
-            updateItemCard(data, data.order_id, data.item_tasks[0].order_item_id);
+            updateItemOrderHeader(data.order_id, data.item_tasks[0].order_item_id);
         }
         lastScannedTaskId = data.task_id || lastScannedTaskId;
         document.getElementById('undo-scan-btn').style.display = lastScannedTaskId ? 'block' : 'none';
@@ -245,6 +234,40 @@ function handleScanResponse(data) {
         feedback.innerHTML = `<div class="alert alert-danger py-2">${data.error}</div>`;
     }
     setTimeout(() => { feedback.innerHTML = ''; }, 4000);
+}
+
+function loadItemTasks(itemId, rowElement) {
+    fetch(`/scan/item-tasks/${itemId}/`, {
+        headers: {'X-Requested-With': 'XMLHttpRequest'},
+    })
+    .then(r => {
+        if (!r.ok) throw new Error('خطا در بارگذاری داده‌ها');
+        return r.json();
+    })
+    .then(data => {
+        if (!data.success) {
+            alert(data.error || 'خطا در بارگذاری قطعات.');
+            return;
+        }
+        if (!data.item_tasks || data.item_tasks.length === 0) {
+            document.getElementById('item-tasks-card').style.display = 'none';
+            updateItemOrderHeader(null, null);
+            clearSelectedItemId();
+            document.querySelectorAll('.item-select-row').forEach(r => r.classList.remove('table-active'));
+            return;
+        }
+        renderItemTasks(data.item_tasks);
+        updateItemOrderHeader(data.order_id, data.item_id);
+        saveSelectedItemId(itemId);
+        document.querySelectorAll('.item-select-row').forEach(r => r.classList.remove('table-active'));
+        if (rowElement) {
+            rowElement.classList.add('table-active');
+        } else {
+            const row = document.querySelector(`.item-select-row[data-item-id="${itemId}"]`);
+            if (row) row.classList.add('table-active');
+        }
+    })
+    .catch(err => alert('خطای شبکه: ' + err.message));
 }
 
 document.addEventListener('DOMContentLoaded', function() {
@@ -282,7 +305,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 if (data.success) {
                     location.reload();
                 } else {
-                    alert(data.error || 'خطا در تکمیل تسک.');
+                    alert(data.error || 'خطا در تکمیل.');
                 }
             } catch (error) {
                 alert('خطای شبکه: ' + error.message);
@@ -310,26 +333,21 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     }
 
-    const initialItemTasks = JSON.parse('{{ item_tasks_json|escapejs }}');
-    if (initialItemTasks && initialItemTasks.length > 0) {
-        renderItemTasks(initialItemTasks);
-        updateItemCard({item_tasks: initialItemTasks}, '{{ item_order_id|default:"" }}', initialItemTasks[0].order_item_id || '{{ item_order_item_id|default:"" }}');
+    const savedItemId = getSelectedItemId();
+    if (savedItemId) {
+        loadItemTasks(savedItemId, null);
+    } else {
+        const initialItemTasks = JSON.parse('{{ item_tasks_json|escapejs }}');
+        if (initialItemTasks && initialItemTasks.length > 0) {
+            renderItemTasks(initialItemTasks);
+            updateItemOrderHeader('{{ item_order_id|default:"" }}', initialItemTasks[0].order_item_id || '{{ item_order_item_id|default:"" }}');
+        }
     }
 
     document.querySelectorAll('.item-select-row').forEach(function (row) {
         row.addEventListener('click', function () {
             const itemId = this.getAttribute('data-item-id');
-            fetch(`/scan/item-tasks/${itemId}/`, {
-                headers: {'X-Requested-With': 'XMLHttpRequest'},
-            })
-            .then(r => r.json())
-            .then(data => {
-                if (!data.success) return;
-                renderItemTasks(data.item_tasks);
-                updateItemCard(data, data.order_id, data.item_id);
-                document.querySelectorAll('.item-select-row').forEach(r => r.classList.remove('table-active'));
-                row.classList.add('table-active');
-            });
+            loadItemTasks(itemId, this);
         });
     });
 });

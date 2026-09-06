@@ -1736,14 +1736,29 @@ def get_item_task_progress_for_station(order_item_id, station_name):
     tasks = ProductionTask.objects.filter(
         order_item_id=order_item_id,
         station_name=station_name
-    ).select_related('part').order_by('step_order')
+    ).select_related('part', 'order_item__product__category').order_by('step_order')
 
     result = []
     for task in tasks:
-        if task.is_manual_item_task:
-            label = "تسک عملیات مشترک"
-        elif task.part:
-            label = f"{task.part.name or task.part.f2 or task.part.f3 or 'قطعه'}"
+        if task.part:
+            part_name = task.part.name or task.part.f2 or task.part.f3 or 'قطعه'
+            category_name = ''
+            product_name = ''
+            if task.order_item and task.order_item.product:
+                product_name = task.order_item.product.name
+                if task.order_item.product.category:
+                    category_name = task.order_item.product.category.name
+            elif task.part.pname:
+                product_name = task.part.pname
+
+            if category_name and product_name:
+                label = f"{part_name} ({category_name} - {product_name})"
+            elif category_name:
+                label = f"{part_name} ({category_name})"
+            elif product_name:
+                label = f"{part_name} ({product_name})"
+            else:
+                label = part_name
         else:
             label = "—"
 
@@ -1754,8 +1769,6 @@ def get_item_task_progress_for_station(order_item_id, station_name):
             'completed_quantity': task.completed_quantity,
             'quantity': task.quantity,
             'status': task.status,
-            'is_manual_item_task': task.is_manual_item_task,
-            'manual_reference_file': task.manual_reference_file,
         })
     return result
 

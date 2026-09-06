@@ -473,77 +473,6 @@ def admin_delete_task(request, task_id):
 
 
 @login_required
-@admin_or_manager_required
-def create_manual_item_task(request):
-    if request.method == 'POST':
-        form = ManualItemTaskForm(request.POST, request.FILES)
-        if form.is_valid():
-            order_item = form.cleaned_data['order_item']
-            station_name = form.cleaned_data['station_name']
-            ref_file = form.cleaned_data['reference_file']
-
-            max_step = ProductionTask.objects.filter(order=order_item.order).aggregate(
-                max_step=models.Max('step_order')
-            )['max_step'] or 0
-            new_step = max_step + 1
-
-            import os
-            from django.conf import settings
-            upload_dir = os.path.join(settings.MEDIA_ROOT, 'manual_task_files')
-            os.makedirs(upload_dir, exist_ok=True)
-            filename = ref_file.name
-            file_path = os.path.join(upload_dir, filename)
-            with open(file_path, 'wb+') as destination:
-                for chunk in ref_file.chunks():
-                    destination.write(chunk)
-            rel_path = os.path.join('manual_task_files', filename)
-
-            task = ProductionTask.objects.create(
-                order=order_item.order,
-                part=None,
-                order_item=order_item,
-                station_name=station_name,
-                step_order=new_step,
-                quantity=order_item.quantity,
-                completed_quantity=0,
-                status='pending',
-                manual_reference_file=rel_path,
-                is_manual_item_task=True,
-            )
-            messages.success(request, f'تسک عملیات مشترک برای آیتم {order_item} با موفقیت ایجاد شد.')
-            return redirect('admin_tasks_management')
-    else:
-        form = ManualItemTaskForm()
-
-    context = {'form': form}
-    return render(request, 'create_manual_item_task.html', context)
-
-
-@login_required
-@require_POST
-def manual_task_mark_progress(request, task_id):
-    task = get_object_or_404(ProductionTask, pk=task_id)
-    if not task.is_manual_item_task:
-        return JsonResponse({'success': False, 'error': 'این تسک نوع عملیات مشترک نیست.'}, status=400)
-
-    with transaction.atomic():
-        task.completed_quantity += 1
-        if task.completed_quantity > task.quantity:
-            task.completed_quantity = task.quantity
-        if task.completed_quantity >= task.quantity:
-            task.status = 'done'
-            task.scanned_by = request.user
-        task.save()
-
-    return JsonResponse({
-        'success': True,
-        'completed_quantity': task.completed_quantity,
-        'quantity': task.quantity,
-        'status': task.status,
-    })
-
-
-@login_required
 @staff_or_representative_required
 def scan_item_tasks_ajax(request, item_id):
     if not hasattr(request.user, 'workerprofile'):
@@ -579,6 +508,28 @@ def undo_scan(request, task_id):
             task.status = 'pending'
             task.scanned_by = None
             task.completed_at = None
+        task.save()
+
+    return JsonResponse({
+        'success': True,
+        'completed_quantity': task.completed_quantity,
+        'quantity': task.quantity,
+        'status': task.status,
+    })
+
+
+@login_required
+@require_POST
+def mark_task_done(request, task_id):
+    task = get_object_or_404(ProductionTask, pk=task_id)
+
+    with transaction.atomic():
+        task.completed_quantity += 1
+        if task.completed_quantity > task.quantity:
+            task.completed_quantity = task.quantity
+        if task.completed_quantity >= task.quantity:
+            task.status = 'done'
+            task.scanned_by = request.user
         task.save()
 
     return JsonResponse({
@@ -956,24 +907,26 @@ def dashboard(request):
 @login_required
 @staff_or_representative_required
 def order_list(request):
-    orders = Order.objects.select_related('customer').all().order_by('-id')  # مرتب‌سازی نزولی
+    orders = Order.objects.select_related('customer', 'user').all().order_by('-id')
 
-    # فیلتر وضعیت
     status = request.GET.get('status')
     if status:
         orders = orders.filter(status=status)
 
-    # جستجوی عمومی
     q = request.GET.get('q')
     if q:
         orders = orders.filter(
             Q(id__icontains=q) |
+            Q(number__icontains=q) |
             Q(customer__name__icontains=q) |
             Q(user__username__icontains=q) |
-            Q(number__icontains=q)
-        )
+            Q(user__first_name__icontains=q) |
+            Q(user__last_name__icontains=q) |
+            Q(items__id__icontains=q) |
+            Q(items__product__name__icontains=q) |
+            Q(items__product__category__name__icontains=q)
+        ).distinct()
 
-    # فیلترهای اختصاصی ستون‌ها
     id_filter = request.GET.get('id_filter')
     if id_filter:
         orders = orders.filter(id__icontains=id_filter)
@@ -982,10 +935,8 @@ def order_list(request):
     if customer_filter:
         orders = orders.filter(customer__name__icontains=customer_filter)
 
-    # صفحه‌بندی
     paginator = Paginator(orders, 200)
-    page_number = request.GET.get('page')
-    page_obj = paginator.get_page(page_number)
+    page_obj = paginator.get_page(request.GET.get('page'))
 
     context = {
         'orders': page_obj,
@@ -995,6 +946,45 @@ def order_list(request):
         'customer_filter': customer_filter,
     }
     return render(request, 'order_list.html', context)
+
+
+@login_required
+@staff_or_representative_required
+def order_items_expand_ajax(request, order_id):
+    order = get_object_or_404(
+        Order.objects.prefetch_related(
+            'items__product__category',
+            'items__logs',
+            'items__packaging_units',
+        ),
+        pk=order_id
+    )
+
+    production_stations = [c for c, _ in STATION_CHOICES if c not in ('packaging', 'shipping')]
+    station_label = dict(STATION_CHOICES)
+
+    rows = []
+    for item in order.items.all():
+        done_stages = {log.stage for log in item.logs.all() if log.stage in production_stations}
+        last_stage_code = None
+        for code in production_stations:
+            if code in done_stages:
+                last_stage_code = code
+        last_stage = station_label.get(last_stage_code) if last_stage_code else 'شروع نشده'
+
+        packed, total = item.packaging_progress
+        shipped, _ = item.shipping_progress
+
+        rows.append({
+            'item': item,
+            'last_stage': last_stage,
+            'packed': packed,
+            'shipped': shipped,
+            'total_units': total,
+        })
+
+    html = render_to_string('_order_items_expand.html', {'items': rows}, request=request)
+    return JsonResponse({'success': True, 'html': html})
 
 
 
@@ -1622,7 +1612,7 @@ def scan_part(request):
     pending_tasks = ProductionTask.objects.filter(
         station_name=worker_stage,
         status='pending'
-    ).select_related('part', 'order').order_by('order__created_at')
+    ).select_related('part', 'order', 'order_item__product__category').order_by('order__created_at')
 
     if request.method == 'POST':
         barcode = request.POST.get('barcode', '').strip()
@@ -1765,9 +1755,6 @@ def scan_part_cnc(request):
     if not task:
         return JsonResponse({'success': False, 'error': f"هیچ  در انتظاری برای قطعه '{part.name}' در ایستگاه CNC یافت نشد."}, status=404)
 
-    if task.is_manual_item_task:
-        return JsonResponse({'success': False, 'error': 'این تسک نوع عملیات مشترک دارد و از این مسیر قابل پردازش نیست.'}, status=400)
-
     is_first_scan = task.completed_quantity == 0
 
     with transaction.atomic():
@@ -1864,9 +1851,6 @@ def scan_part_dr(request):
 
     if not task:
         return JsonResponse({'success': False, 'error': f"هیچ  در انتظاری برای قطعه '{part.name}' در ایستگاه سوراخکاری یافت نشد."}, status=404)
-
-    if task.is_manual_item_task:
-        return JsonResponse({'success': False, 'error': 'این تسک نوع عملیات مشترک دارد و از این مسیر قابل پردازش نیست.'}, status=400)
 
     is_first_scan = task.completed_quantity == 0
 
@@ -3359,6 +3343,52 @@ def report_shipped(request):
         'selected_plate': plate or '',
     }
     return render(request, 'reports/shipped.html', context)
+
+
+@login_required
+@staff_or_representative_required
+def report_ready_to_ship(request):
+    representative_id = request.GET.get('representative')
+
+    units = PackagingUnit.objects.filter(
+        is_packed=True,
+        is_shipped=False,
+    ).select_related(
+        'order_item__order__customer',
+        'order_item__order__user',
+        'order_item__product__category',
+    ).prefetch_related('order_item__ordercolor').order_by(
+        'order_item__order__user__username', 'order_item__order_id', 'order_item__product__name'
+    )
+
+    if representative_id:
+        units = units.filter(order_item__order__user_id=representative_id)
+
+    representatives = User.objects.filter(
+        order__items__packaging_units__is_packed=True,
+        order__items__packaging_units__is_shipped=False,
+    ).distinct().order_by('username')
+
+    representative_name = 'همه نمایندگان'
+    if representative_id:
+        rep = User.objects.filter(pk=representative_id).first()
+        if rep:
+            representative_name = rep.get_full_name() or rep.username
+
+    if request.GET.get('print'):
+        return render(request, 'reports/ready_to_ship_print.html', {
+            'units': units,
+            'today': jdatetime.date.today(),
+            'representative_name': representative_name,
+        })
+
+    context = {
+        'units': units,
+        'representatives': representatives,
+        'selected_representative': representative_id or '',
+        'representative_name': representative_name,
+    }
+    return render(request, 'reports/ready_to_ship.html', context)
 
 
 

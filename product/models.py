@@ -555,8 +555,6 @@ class ProductionTask(models.Model):
         verbose_name="بخش رنگی (بدنه، درب، ...)"
     )
     completed_quantity = models.PositiveIntegerField(default=0, verbose_name="تعداد انجام‌شده")
-    manual_reference_file = models.CharField(max_length=255, blank=True, verbose_name="فایل مرجع (برای تسک‌های عملیات مشترک)")
-    is_manual_item_task = models.BooleanField(default=False, verbose_name="تسک عملیات مشترک روی آیتم (بدون بارکد دستگاه)")
 
     class Meta:
         verbose_name = "وظیفه تولید"
