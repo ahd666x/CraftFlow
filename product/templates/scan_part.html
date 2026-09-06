@@ -91,51 +91,35 @@
         <div class="col-12">
             <div class="card shadow">
                 <div class="card-header bg-warning text-dark">
-                    <h5 class="mb-0">کارهای آماده انجام (گروه‌بندی شده)</h5>
+                    <h5 class="mb-0">آیتم‌های آماده انجام در این ایستگاه</h5>
                 </div>
                 <div class="card-body p-0">
-                    {% for key, group in grouped_tasks.items %}
-                    <div class="border-bottom p-3">
-                        <div class="d-flex justify-content-between align-items-center mb-2">
-                            <strong>سفارش {{ group.order.id }} - {{ group.order_item.product.name }}</strong>
-                            <span class="badge bg-secondary">آیتم {{ group.order_item.id }}</span>
-                        </div>
-                        <div class="table-responsive">
-                            <table class="table table-sm table-hover align-middle mb-0">
-                                <thead class="table-light">
-                                    <tr>
-                                        <th>نام قطعه</th>
-                                        <th>بارکد</th>
-                                        <th>تعداد</th>
-                                        <th>عملیات</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    {% for task in group.tasks %}
-                                    <tr>
-                                        <td>{{ task.part.name }}-{{ task.part.pname }}</td>
-                                        <td><code>{{ task.part.f3 }}</code></td>
-                                        <td><span class="badge bg-warning text-dark">{{ task.quantity }}</span></td>
-                                        <td>
-                                            <form method="post" class="d-inline task-done-form" data-task-id="{{ task.id }}">
-                                                {% csrf_token %}
-                                                <button type="submit" class="btn btn-sm btn-outline-success">
-                                                    <i class="fas fa-check"></i> انجام شد
-                                                </button>
-                                            </form>
-                                        </td>
-                                    </tr>
-                                    {% endfor %}
-                                </tbody>
-                            </table>
-                        </div>
-                    </div>
-                    {% empty %}
-                    <div class="text-center py-4 text-muted">
-                        <i class="fas fa-check-circle fa-2x mb-2 d-block"></i>
-                        هیچ کاری در انتظار نیست.
-                    </div>
-                    {% endfor %}
+                    <table class="table table-hover align-middle mb-0">
+                        <thead class="table-light">
+                            <tr>
+                                <th>سفارش</th>
+                                <th>مشتری</th>
+                                <th>نماینده</th>
+                                <th>محصول</th>
+                                <th>تعداد کل</th>
+                                <th>باقیمانده در این ایستگاه</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for row in items_with_progress %}
+                            <tr class="item-select-row" style="cursor:pointer;" data-item-id="{{ row.item.id }}">
+                                <td>{{ row.order.id }}/{{ row.item.id }}</td>
+                                <td>{{ row.order.customer.name }}</td>
+                                <td>{{ row.order.user.get_full_name|default:row.order.user.username }}</td>
+                                <td>{{ row.item.product.name }}</td>
+                                <td>{{ row.item.quantity }}</td>
+                                <td><span class="badge bg-secondary">{{ row.remaining_parts }} از {{ row.total_parts }}</span></td>
+                            </tr>
+                            {% empty %}
+                            <tr><td colspan="6" class="text-center py-4 text-muted">هیچ آیتمی در انتظار نیست.</td></tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
                 </div>
             </div>
         </div>
@@ -219,21 +203,19 @@ function refreshCurrentView() {
         method: 'GET',
         headers: {'X-Requested-With': 'XMLHttpRequest'},
     }).then(r => r.json()).then(data => {
-        if (data.item_tasks) {
+        if (data.item_tasks && data.item_tasks.length > 0) {
             renderItemTasks(data.item_tasks);
-            updateItemCard(data);
+            updateItemCard(data, data.order_id, data.item_tasks[0].order_item_id);
         }
     }).catch(() => {});
 }
 
-function updateItemCard(data) {
+function updateItemCard(data, orderId, itemId) {
     if (!data || !data.item_tasks || data.item_tasks.length === 0) {
         document.getElementById('item-progress-card').style.display = 'none';
         document.getElementById('item-tasks-card').style.display = 'none';
         return;
     }
-    const orderId = '{{ item_order_id|default:"" }}';
-    const itemId = data.item_tasks[0].order_item_id || '{{ item_order_item_id|default:"" }}';
     document.getElementById('item-progress-card').style.display = 'block';
     document.getElementById('item-order-number').textContent = 'سفارش ' + orderId + ' | آیتم ' + itemId;
     const total = data.item_tasks.reduce((s, t) => s + t.quantity, 0);
@@ -251,9 +233,9 @@ function handleScanResponse(data) {
         if (data.download_url) {
             window.open(data.download_url, '_blank');
         }
-        if (data.item_tasks) {
+        if (data.item_tasks && data.item_tasks.length > 0) {
             renderItemTasks(data.item_tasks);
-            updateItemCard(data);
+            updateItemCard(data, data.order_id, data.item_tasks[0].order_item_id);
         }
         lastScannedTaskId = data.task_id || lastScannedTaskId;
         document.getElementById('undo-scan-btn').style.display = lastScannedTaskId ? 'block' : 'none';
@@ -331,8 +313,25 @@ document.addEventListener('DOMContentLoaded', function() {
     const initialItemTasks = JSON.parse('{{ item_tasks_json|escapejs }}');
     if (initialItemTasks && initialItemTasks.length > 0) {
         renderItemTasks(initialItemTasks);
-        updateItemCard({item_tasks: initialItemTasks});
+        updateItemCard({item_tasks: initialItemTasks}, '{{ item_order_id|default:"" }}', initialItemTasks[0].order_item_id || '{{ item_order_item_id|default:"" }}');
     }
+
+    document.querySelectorAll('.item-select-row').forEach(function (row) {
+        row.addEventListener('click', function () {
+            const itemId = this.getAttribute('data-item-id');
+            fetch(`/scan/item-tasks/${itemId}/`, {
+                headers: {'X-Requested-With': 'XMLHttpRequest'},
+            })
+            .then(r => r.json())
+            .then(data => {
+                if (!data.success) return;
+                renderItemTasks(data.item_tasks);
+                updateItemCard(data, data.order_id, data.item_id);
+                document.querySelectorAll('.item-select-row').forEach(r => r.classList.remove('table-active'));
+                row.classList.add('table-active');
+            });
+        });
+    });
 });
 </script>
 {% endblock %}

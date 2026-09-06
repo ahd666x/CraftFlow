@@ -95,6 +95,7 @@ urlpatterns = [
     path('dr/download/<str:barcode>/', views.download_dr_file, name='download_dr_file'),
     path('tasks/manual/<int:task_id>/progress/', views.manual_task_mark_progress, name='manual_task_mark_progress'),
     path('tasks/<int:task_id>/undo-scan/', views.undo_scan, name='undo_scan'),
+    path('scan/item-tasks/<int:item_id>/', views.scan_item_tasks_ajax, name='scan_item_tasks_ajax'),
 
     # فروشگاه مشتریان
     # path('shop/', views.shop_product_list, name='shop_product_list'),

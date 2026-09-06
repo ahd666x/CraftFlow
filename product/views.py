@@ -544,6 +544,27 @@ def manual_task_mark_progress(request, task_id):
 
 
 @login_required
+@staff_or_representative_required
+def scan_item_tasks_ajax(request, item_id):
+    if not hasattr(request.user, 'workerprofile'):
+        return JsonResponse({'success': False, 'error': 'پروفایل کاری ندارید'}, status=403)
+
+    worker_stage = request.user.workerprofile.stage
+    item = get_object_or_404(OrderItem.objects.select_related('order', 'product'), pk=item_id)
+
+    from .utils import get_item_task_progress_for_station
+    item_tasks = get_item_task_progress_for_station(item_id, worker_stage)
+
+    return JsonResponse({
+        'success': True,
+        'item_tasks': item_tasks,
+        'order_id': item.order_id,
+        'item_id': item.id,
+        'product_name': item.product.name if item.product else '',
+    })
+
+
+@login_required
 @require_POST
 def undo_scan(request, task_id):
     task = get_object_or_404(ProductionTask, pk=task_id)
@@ -1679,16 +1700,20 @@ def scan_part(request):
     # GET request
     stage_display = dict(STATION_CHOICES).get(worker_stage, worker_stage)
 
-    grouped_tasks = {}
+    items_with_progress = []
+    item_ids_seen = set()
     for task in pending_tasks:
-        key = (task.order.id, task.order_item_id)
-        if key not in grouped_tasks:
-            grouped_tasks[key] = {
-                'order': task.order,
-                'order_item': task.order_item,
-                'tasks': [],
-            }
-        grouped_tasks[key]['tasks'].append(task)
+        item = task.order_item
+        if not item or item.id in item_ids_seen:
+            continue
+        item_ids_seen.add(item.id)
+        station_tasks = item.paint_tasks.filter(station_name=worker_stage)
+        items_with_progress.append({
+            'item': item,
+            'order': item.order,
+            'total_parts': station_tasks.count(),
+            'remaining_parts': station_tasks.exclude(status='done').count(),
+        })
 
     first_item_tasks = []
     if pending_tasks:
@@ -1699,7 +1724,7 @@ def scan_part(request):
 
     context = {
         'pending_tasks': pending_tasks,
-        'grouped_tasks': grouped_tasks,
+        'items_with_progress': items_with_progress,
         'worker_stage': worker_stage,
         'stage_display': stage_display,
         'item_tasks_json': json.dumps(first_item_tasks, ensure_ascii=False),
@@ -1746,18 +1771,25 @@ def scan_part_cnc(request):
     is_first_scan = task.completed_quantity == 0
 
     with transaction.atomic():
-        if is_first_scan:
+        task.completed_quantity += 1
+        if task.completed_quantity > task.quantity:
+            task.completed_quantity = task.quantity
+        if task.completed_quantity >= task.quantity:
             task.status = 'done'
-            task.scanned_by = request.user
-            task.save()
-        else:
-            task.completed_quantity += 1
-            if task.completed_quantity > task.quantity:
-                task.completed_quantity = task.quantity
-            if task.completed_quantity >= task.quantity:
-                task.status = 'done'
-                task.scanned_by = request.user
-            task.save()
+        task.scanned_by = request.user
+        task.save()
+
+    from .utils import get_item_task_progress_for_station
+    response_data = {
+        'success': True,
+        'status': task.status,
+        'message': f"✅  CNC: {task.completed_quantity} از {task.quantity} ثبت شد.",
+        'task_id': task.id,
+        'order_id': task.order_id,
+        'completed_quantity': task.completed_quantity,
+        'quantity': task.quantity,
+        'item_tasks': get_item_task_progress_for_station(task.order_item_id, 'cnc'),
+    }
 
     if is_first_scan:
         source_dir = getattr(settings, 'CNC_SOURCE_DIR', '')
@@ -1765,42 +1797,13 @@ def scan_part_cnc(request):
         file_barcode = re.sub(r'\.item\d+$', '', part.f3)
         filename = f"{file_barcode}{extension}"
         file_path = os.path.join(source_dir, filename)
-
-        from .utils import get_item_task_progress_for_station
         download_url = reverse('download_cnc_file', args=[file_barcode])
-
+        response_data['download_url'] = download_url
         if not os.path.exists(file_path):
-            return JsonResponse({
-                'success': True,
-                'status': 'done',
-                'message': f"✅ تسک CNC تکمیل شد، اما فایل '{filename}' در سرور یافت نشد.",
-                'completed_quantity': task.completed_quantity,
-                'quantity': task.quantity,
-                'item_tasks': get_item_task_progress_for_station(task.order_item_id, 'cnc'),
-                'download_url': download_url,
-            })
+            response_data['message'] = f"✅  CNC تکمیل شد، اما فایل '{filename}' در سرور یافت نشد."
 
-        return JsonResponse({
-            'success': True,
-            'status': 'done',
-            'message': '✅  CNC تکمیل شد.',
-            'task_id': task.id,
-            'completed_quantity': task.completed_quantity,
-            'quantity': task.quantity,
-            'item_tasks': get_item_task_progress_for_station(task.order_item_id, 'cnc'),
-            'download_url': download_url,
-        })
-    else:
-        from .utils import get_item_task_progress_for_station
-        return JsonResponse({
-            'success': True,
-            'status': task.status,
-            'message': f"✅  CNC: {task.completed_quantity} از {task.quantity} ثبت شد.",
-            'task_id': task.id,
-            'completed_quantity': task.completed_quantity,
-            'quantity': task.quantity,
-            'item_tasks': get_item_task_progress_for_station(task.order_item_id, 'cnc'),
-        })
+    return JsonResponse(response_data)
+
 
 @login_required
 @staff_or_representative_required
@@ -1868,18 +1871,25 @@ def scan_part_dr(request):
     is_first_scan = task.completed_quantity == 0
 
     with transaction.atomic():
-        if is_first_scan:
+        task.completed_quantity += 1
+        if task.completed_quantity > task.quantity:
+            task.completed_quantity = task.quantity
+        if task.completed_quantity >= task.quantity:
             task.status = 'done'
-            task.scanned_by = request.user
-            task.save()
-        else:
-            task.completed_quantity += 1
-            if task.completed_quantity > task.quantity:
-                task.completed_quantity = task.quantity
-            if task.completed_quantity >= task.quantity:
-                task.status = 'done'
-                task.scanned_by = request.user
-            task.save()
+        task.scanned_by = request.user
+        task.save()
+
+    from .utils import get_item_task_progress_for_station
+    response_data = {
+        'success': True,
+        'status': task.status,
+        'message': f"✅  سوراخکاری: {task.completed_quantity} از {task.quantity} ثبت شد.",
+        'task_id': task.id,
+        'order_id': task.order_id,
+        'completed_quantity': task.completed_quantity,
+        'quantity': task.quantity,
+        'item_tasks': get_item_task_progress_for_station(task.order_item_id, 'dr'),
+    }
 
     if is_first_scan:
         source_dir = getattr(settings, 'DR_SOURCE_DIR', '')
@@ -1887,42 +1897,13 @@ def scan_part_dr(request):
         file_barcode = re.sub(r'\.item\d+$', '', part.f3)
         filename = f"{file_barcode}{extension}"
         file_path = os.path.join(source_dir, filename)
-
-        from .utils import get_item_task_progress_for_station
         download_url = reverse('download_dr_file', args=[file_barcode])
-
+        response_data['download_url'] = download_url
         if not os.path.exists(file_path):
-            return JsonResponse({
-                'success': True,
-                'status': 'done',
-                'message': f"✅  سوراخکاری تکمیل شد، اما فایل '{filename}' در سرور یافت نشد.",
-                'completed_quantity': task.completed_quantity,
-                'quantity': task.quantity,
-                'item_tasks': get_item_task_progress_for_station(task.order_item_id, 'dr'),
-                'download_url': download_url,
-            })
+            response_data['message'] = f"✅  سوراخکاری تکمیل شد، اما فایل '{filename}' در سرور یافت نشد."
 
-        return JsonResponse({
-            'success': True,
-            'status': 'done',
-            'message': '✅  سوراخکاری تکمیل شد.',
-            'task_id': task.id,
-            'completed_quantity': task.completed_quantity,
-            'quantity': task.quantity,
-            'item_tasks': get_item_task_progress_for_station(task.order_item_id, 'dr'),
-            'download_url': download_url,
-        })
-    else:
-        from .utils import get_item_task_progress_for_station
-        return JsonResponse({
-            'success': True,
-            'status': task.status,
-            'message': f"✅  سوراخکاری: {task.completed_quantity} از {task.quantity} ثبت شد.",
-            'task_id': task.id,
-            'completed_quantity': task.completed_quantity,
-            'quantity': task.quantity,
-            'item_tasks': get_item_task_progress_for_station(task.order_item_id, 'dr'),
-        })
+    return JsonResponse(response_data)
+
 
 @login_required
 @staff_or_representative_required
