@@ -198,6 +198,7 @@ class Order(models.Model):
                             ProductionTask(
                                 order=self,
                                 part=dynamic_part,
+                                order_item=item,
                                 station_name=station_name.lower(),
                                 step_order=current_step,
                                 quantity=total_qty,
@@ -553,6 +554,9 @@ class ProductionTask(models.Model):
         blank=True,
         verbose_name="بخش رنگی (بدنه، درب، ...)"
     )
+    completed_quantity = models.PositiveIntegerField(default=0, verbose_name="تعداد انجام‌شده")
+    manual_reference_file = models.CharField(max_length=255, blank=True, verbose_name="فایل مرجع (برای تسک‌های عملیات مشترک)")
+    is_manual_item_task = models.BooleanField(default=False, verbose_name="تسک عملیات مشترک روی آیتم (بدون بارکد دستگاه)")
 
     class Meta:
         verbose_name = "وظیفه تولید"
@@ -573,9 +577,19 @@ class ProductionTask(models.Model):
         if self.pk:
             old_status = ProductionTask.objects.filter(pk=self.pk).values_list('status', flat=True).first()
 
+        if self.pk and self.completed_quantity >= self.quantity and self.status != 'done':
+            self.status = 'done'
+
         if self.status == 'done' and old_status != 'done':
             if not self.completed_at:
                 self.completed_at = jdatetime.date.today()
+            if self.completed_quantity < self.quantity:
+                self.completed_quantity = self.quantity
+            if kwargs.get('update_fields'):
+                uf = list(kwargs['update_fields'])
+                if 'completed_quantity' not in uf:
+                    uf.append('completed_quantity')
+                kwargs['update_fields'] = tuple(uf)
 
         super().save(*args, **kwargs)
 

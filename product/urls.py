@@ -38,6 +38,10 @@ urlpatterns = [
     path('management/orders/<int:order_id>/tasks/', views.admin_order_tasks, name='admin_order_tasks'),
     path('management/task/<int:task_id>/delete/', views.admin_delete_task, name='admin_delete_task'),
     path('management/tasks/', views.admin_tasks_management, name='admin_tasks_management'),
+    path('management/tasks/manual/create/', views.create_manual_item_task, name='create_manual_item_task'),
+    path('archive/upload/', views.archive_upload, name='archive_upload'),
+    path('archive/delete-file/', views.archive_delete_file, name='archive_delete_file'),
+    path('archive/download/<str:archive_type>/<str:filename>/', views.archive_download, name='archive_download'),
     path('', views.dashboard, name='dashboard'),
     path('orders/', views.order_list, name='order_list'),
     path('orderlist/', views.order_item_list, name='order_item_list'),
@@ -89,6 +93,8 @@ urlpatterns = [
     path('cnc/download/<str:barcode>/', views.download_cnc_file, name='download_cnc_file'),
     path('scan/part/dr/', views.scan_part_dr, name='scan_part_dr'),
     path('dr/download/<str:barcode>/', views.download_dr_file, name='download_dr_file'),
+    path('tasks/manual/<int:task_id>/progress/', views.manual_task_mark_progress, name='manual_task_mark_progress'),
+    path('tasks/<int:task_id>/undo-scan/', views.undo_scan, name='undo_scan'),
 
     # فروشگاه مشتریان
     # path('shop/', views.shop_product_list, name='shop_product_list'),

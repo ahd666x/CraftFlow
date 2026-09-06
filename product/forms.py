@@ -280,9 +280,22 @@ class OrderCustomerForm(forms.Form):
         return cleaned
 
 
-
-
-
+class ManualItemTaskForm(forms.Form):
+    order_item = forms.ModelChoiceField(
+        queryset=OrderItem.objects.select_related('order', 'product').all(),
+        label="آیتم سفارش",
+        widget=forms.Select(attrs={'class': 'form-select'})
+    )
+    station_name = forms.ChoiceField(
+        choices=[('cut', 'برش'), ('cnc', 'CNC'), ('dr', 'سوراخکاری')],
+        label="ایستگاه کاری",
+        widget=forms.Select(attrs={'class': 'form-select'})
+    )
+    reference_file = forms.FileField(
+        label="فایل مرجع",
+        required=True,
+        widget=forms.FileInput(attrs={'class': 'form-control'})
+    )
 
 
 from .models import Part

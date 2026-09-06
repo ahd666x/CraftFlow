@@ -1729,6 +1729,38 @@ def reschedule_worker_tasks_on_date(worker_id, target_date, allow_overtime=False
 
 
 # ===================================================================
+#   پیشرفت تسک‌های یک آیتم در یک ایستگاه
+# ===================================================================
+
+def get_item_task_progress_for_station(order_item_id, station_name):
+    tasks = ProductionTask.objects.filter(
+        order_item_id=order_item_id,
+        station_name=station_name
+    ).select_related('part').order_by('step_order')
+
+    result = []
+    for task in tasks:
+        if task.is_manual_item_task:
+            label = "تسک عملیات مشترک"
+        elif task.part:
+            label = f"{task.part.name or task.part.f2 or task.part.f3 or 'قطعه'}"
+        else:
+            label = "—"
+
+        result.append({
+            'task_id': task.id,
+            'order_item_id': task.order_item_id,
+            'label': label,
+            'completed_quantity': task.completed_quantity,
+            'quantity': task.quantity,
+            'status': task.status,
+            'is_manual_item_task': task.is_manual_item_task,
+            'manual_reference_file': task.manual_reference_file,
+        })
+    return result
+
+
+# ===================================================================
 #   سیگنال‌ها
 # ===================================================================
 from django.db.models.signals import post_save, post_delete

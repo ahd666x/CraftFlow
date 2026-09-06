@@ -61,9 +61,14 @@
             <i class="bi bi-diagram-3 text-primary"></i>
             مدیریت وظایف تولید
         </h2>
-        <a href="{% url 'dashboard' %}" class="btn btn-secondary">
-            <i class="bi bi-arrow-right"></i> بازگشت به داشبورد
-        </a>
+        <div>
+            <a href="{% url 'create_manual_item_task' %}" class="btn btn-success me-2">
+                <i class="bi bi-plus-lg"></i> تسک عملیات مشترک
+            </a>
+            <a href="{% url 'dashboard' %}" class="btn btn-secondary">
+                <i class="bi bi-arrow-right"></i> بازگشت به داشبورد
+            </a>
+        </div>
     </div>
 
     {% if messages %}

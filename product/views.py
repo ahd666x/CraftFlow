@@ -474,6 +474,212 @@ def admin_delete_task(request, task_id):
 
 @login_required
 @admin_or_manager_required
+def create_manual_item_task(request):
+    if request.method == 'POST':
+        form = ManualItemTaskForm(request.POST, request.FILES)
+        if form.is_valid():
+            order_item = form.cleaned_data['order_item']
+            station_name = form.cleaned_data['station_name']
+            ref_file = form.cleaned_data['reference_file']
+
+            max_step = ProductionTask.objects.filter(order=order_item.order).aggregate(
+                max_step=models.Max('step_order')
+            )['max_step'] or 0
+            new_step = max_step + 1
+
+            import os
+            from django.conf import settings
+            upload_dir = os.path.join(settings.MEDIA_ROOT, 'manual_task_files')
+            os.makedirs(upload_dir, exist_ok=True)
+            filename = ref_file.name
+            file_path = os.path.join(upload_dir, filename)
+            with open(file_path, 'wb+') as destination:
+                for chunk in ref_file.chunks():
+                    destination.write(chunk)
+            rel_path = os.path.join('manual_task_files', filename)
+
+            task = ProductionTask.objects.create(
+                order=order_item.order,
+                part=None,
+                order_item=order_item,
+                station_name=station_name,
+                step_order=new_step,
+                quantity=order_item.quantity,
+                completed_quantity=0,
+                status='pending',
+                manual_reference_file=rel_path,
+                is_manual_item_task=True,
+            )
+            messages.success(request, f'تسک عملیات مشترک برای آیتم {order_item} با موفقیت ایجاد شد.')
+            return redirect('admin_tasks_management')
+    else:
+        form = ManualItemTaskForm()
+
+    context = {'form': form}
+    return render(request, 'create_manual_item_task.html', context)
+
+
+@login_required
+@require_POST
+def manual_task_mark_progress(request, task_id):
+    task = get_object_or_404(ProductionTask, pk=task_id)
+    if not task.is_manual_item_task:
+        return JsonResponse({'success': False, 'error': 'این تسک نوع عملیات مشترک نیست.'}, status=400)
+
+    with transaction.atomic():
+        task.completed_quantity += 1
+        if task.completed_quantity > task.quantity:
+            task.completed_quantity = task.quantity
+        if task.completed_quantity >= task.quantity:
+            task.status = 'done'
+            task.scanned_by = request.user
+        task.save()
+
+    return JsonResponse({
+        'success': True,
+        'completed_quantity': task.completed_quantity,
+        'quantity': task.quantity,
+        'status': task.status,
+    })
+
+
+@login_required
+@require_POST
+def undo_scan(request, task_id):
+    task = get_object_or_404(ProductionTask, pk=task_id)
+    if task.completed_quantity <= 0:
+        return JsonResponse({'success': False, 'error': 'این تسک هنوز شروع نشده است.'}, status=400)
+
+    with transaction.atomic():
+        task.completed_quantity -= 1
+        if task.completed_quantity < 0:
+            task.completed_quantity = 0
+        if task.completed_quantity == 0:
+            task.status = 'pending'
+            task.scanned_by = None
+            task.completed_at = None
+        task.save()
+
+    return JsonResponse({
+        'success': True,
+        'completed_quantity': task.completed_quantity,
+        'quantity': task.quantity,
+        'status': task.status,
+    })
+
+
+@login_required
+@admin_or_manager_required
+def archive_upload(request):
+    archive_type = request.GET.get('type', 'cnc').lower()
+    if archive_type not in ('cnc', 'dr'):
+        archive_type = 'cnc'
+
+    if archive_type == 'cnc':
+        source_dir = getattr(settings, 'CNC_SOURCE_DIR', '')
+        expected_ext = getattr(settings, 'CNC_FILE_EXTENSION', '.cnc')
+    else:
+        source_dir = getattr(settings, 'DR_SOURCE_DIR', '')
+        expected_ext = getattr(settings, 'DR_FILE_EXTENSION', '.scx')
+
+    source_dir = str(source_dir)
+    os.makedirs(source_dir, exist_ok=True)
+
+    if request.method == 'POST':
+        uploaded_file = request.FILES.get('archive_file')
+        if not uploaded_file:
+            messages.error(request, 'فایلی انتخاب نشده است.')
+            return redirect('archive_upload')
+
+        ext = os.path.splitext(uploaded_file.name)[1].lower()
+        if ext != expected_ext.lower():
+            messages.error(request, f'فایل باید با پسوند {expected_ext} باشد.')
+            return redirect('archive_upload')
+
+        filename = os.path.basename(uploaded_file.name)
+        filename = re.sub(r'[\\/*?:"<>|]', '', filename)
+        file_path = os.path.join(source_dir, filename)
+
+        with open(file_path, 'wb+') as destination:
+            for chunk in uploaded_file.chunks():
+                destination.write(chunk)
+
+        messages.success(request, f'فایل {filename} با موفقیت آپلود شد.')
+        return redirect(f"{reverse('archive_upload')}?type={archive_type}")
+
+    search_query = request.GET.get('q', '').strip().lower()
+    files = []
+    try:
+        for fname in os.listdir(source_dir):
+            if search_query and search_query not in fname.lower():
+                continue
+            fpath = os.path.join(source_dir, fname)
+            if os.path.isfile(fpath):
+                stat = os.stat(fpath)
+                files.append({
+                    'name': fname,
+                    'size': stat.st_size,
+                    'modified': stat.st_mtime,
+                })
+    except OSError:
+        pass
+
+    files.sort(key=lambda x: x['name'])
+
+    context = {
+        'archive_type': archive_type,
+        'files': files,
+        'search_query': search_query,
+        'expected_ext': expected_ext,
+    }
+    return render(request, 'archive_upload.html', context)
+
+
+@login_required
+@admin_or_manager_required
+def archive_delete_file(request):
+    if request.method != 'POST':
+        return JsonResponse({'success': False, 'error': 'روش غیرمجاز'}, status=405)
+
+    filename = request.POST.get('filename', '').strip()
+    archive_type = request.POST.get('archive_type', 'cnc').lower()
+    if not filename:
+        return JsonResponse({'success': False, 'error': 'نام فایل مشخص نشده است.'}, status=400)
+
+    if archive_type == 'cnc':
+        source_dir = str(getattr(settings, 'CNC_SOURCE_DIR', ''))
+    else:
+        source_dir = str(getattr(settings, 'DR_SOURCE_DIR', ''))
+
+    file_path = os.path.join(source_dir, os.path.basename(filename))
+    if not os.path.exists(file_path):
+        return JsonResponse({'success': False, 'error': 'فایل یافت نشد.'}, status=404)
+
+    os.remove(file_path)
+    return JsonResponse({'success': True})
+
+
+@login_required
+@admin_or_manager_required
+def archive_download(request, archive_type, filename):
+    archive_type = archive_type.lower()
+    if archive_type == 'cnc':
+        source_dir = str(getattr(settings, 'CNC_SOURCE_DIR', ''))
+    else:
+        source_dir = str(getattr(settings, 'DR_SOURCE_DIR', ''))
+
+    file_path = os.path.join(source_dir, os.path.basename(filename))
+    if not os.path.exists(file_path):
+        raise Http404('فایل یافت نشد.')
+
+    with open(file_path, 'rb') as f:
+        response = HttpResponse(f.read(), content_type='application/octet-stream')
+        response['Content-Disposition'] = f'attachment; filename="{os.path.basename(filename)}"'
+        return response
+
+
+@login_required
+@admin_or_manager_required
 def admin_tasks_management(request):
     tasks = ProductionTask.objects.select_related(
         'order', 'part', 'order_item', 'assigned_worker', 'painting_stage'
@@ -546,7 +752,7 @@ def admin_tasks_management(request):
                     old = ProductionTask.objects.filter(pk=task.pk).values_list('status', flat=True).first()
                     if new_status == 'done' and old != 'done':
                         task.completed_at = jdatetime.date.today()
-                    task.save(update_fields=['status', 'completed_at'])
+                    task.save(update_fields=['status', 'completed_at', 'completed_quantity'])
                 messages.success(request, f'وضعیت {count} وظیفه به «{dict(ProductionTask.TASK_STATUS)[new_status]}» تغییر یافت.')
         elif action == 'bulk_worker':
             worker_id = request.POST.get('bulk_worker')
@@ -1402,44 +1608,49 @@ def scan_part(request):
         task_id = request.POST.get('task_id')
 
         if task_id:
-            # تکمیل دستی تسک
             task = get_object_or_404(pending_tasks, id=task_id)
             with transaction.atomic():
                 task.status = 'done'
                 task.scanned_by = request.user
                 task.save()
 
-            # اگر ایستگاه CNC است، فایل را برای دانلود آماده کن
+            if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
+                return JsonResponse({
+                    'success': True,
+                    'status': 'done',
+                    'message': f"تسک '{task.part.name}' تکمیل شد.",
+                    'task_id': task.id,
+                    'completed_quantity': task.completed_quantity,
+                    'quantity': task.quantity,
+                })
             if worker_stage == 'cnc':
-                # حذف .itemX از f3 برای یافتن فایل فیزیکی
                 file_barcode = re.sub(r'\.item\d+$', '', task.part.f3)
                 download_url = reverse('download_cnc_file', args=[file_barcode])
                 messages.success(request, f"تسک '{task.part.name}' تکمیل شد. دریافت فایل...")
                 return redirect(download_url)
-            
             if worker_stage == 'dr':
                 file_barcode = re.sub(r'\.item\d+$', '', task.part.f3)
                 download_url = reverse('download_dr_file', args=[file_barcode])
                 messages.success(request, f" '{task.part.name}' تکمیل شد. دریافت فایل سوراخکاری...")
                 return redirect(download_url)
-            
             messages.success(request, f" قطعه '{task.part.name}' با موفقیت تکمیل شد.")
             return redirect('scan_part')
 
-
-
-        if barcode and worker_stage == 'cnc':
-            # اسکن بارکد (برای ایستگاه‌های غیر CNC مستقیماً در همین ویو پردازش می‌شود)
-            # (برای CNC فرم به scan_part_cnc ارسال می‌شود)
+        if barcode:
             clean_barcode = re.sub(r'\.cnc$', '', barcode, flags=re.IGNORECASE)
+            clean_barcode = re.sub(r'\.scx$', '', clean_barcode, flags=re.IGNORECASE)
             try:
                 part = Part.objects.get(f3=clean_barcode)
             except Part.DoesNotExist:
+                if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
+                    return JsonResponse({'success': False, 'error': f"قطعه‌ای با بارکد '{barcode}' یافت نشد."}, status=404)
                 messages.error(request, f"قطعه‌ای با بارکد '{barcode}' یافت نشد.")
                 return redirect('scan_part')
 
             task = pending_tasks.filter(part=part).first()
             if not task:
+                if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
+                    return JsonResponse({'success': False, 'error': f"هیچ  در انتظاری برای قطعه '{part.name}' در ایستگاه شما یافت نشد."}, status=404)
                 messages.error(request, f"هیچ  در انتظاری برای قطعه '{part.name}' در ایستگاه شما یافت نشد.")
                 return redirect('scan_part')
 
@@ -1448,18 +1659,52 @@ def scan_part(request):
                 task.scanned_by = request.user
                 task.save()
 
+            if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
+                return JsonResponse({
+                    'success': True,
+                    'status': 'done',
+                    'message': f"قطعه '{part.name}' تکمیل شد.",
+                    'task_id': task.id,
+                    'completed_quantity': task.completed_quantity,
+                    'quantity': task.quantity,
+                })
             messages.success(request, f"قطعه '{part.name}' (بارکد: {barcode}) تکمیل شد.")
             return redirect('scan_part')
 
+        if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
+            return JsonResponse({'success': False, 'error': 'لطفاً بارکد را وارد کنید.'}, status=400)
         messages.error(request, "لطفاً بارکد را وارد کنید یا یکی از قطعه را انتخاب نمایید.")
         return redirect('scan_part')
 
     # GET request
     stage_display = dict(STATION_CHOICES).get(worker_stage, worker_stage)
+
+    grouped_tasks = {}
+    for task in pending_tasks:
+        key = (task.order.id, task.order_item_id)
+        if key not in grouped_tasks:
+            grouped_tasks[key] = {
+                'order': task.order,
+                'order_item': task.order_item,
+                'tasks': [],
+            }
+        grouped_tasks[key]['tasks'].append(task)
+
+    first_item_tasks = []
+    if pending_tasks:
+        first = pending_tasks.first()
+        if first.order_item_id:
+            from .utils import get_item_task_progress_for_station
+            first_item_tasks = get_item_task_progress_for_station(first.order_item_id, worker_stage)
+
     context = {
         'pending_tasks': pending_tasks,
+        'grouped_tasks': grouped_tasks,
         'worker_stage': worker_stage,
         'stage_display': stage_display,
+        'item_tasks_json': json.dumps(first_item_tasks, ensure_ascii=False),
+        'item_order_id': pending_tasks.first().order_id if pending_tasks else None,
+        'item_order_item_id': pending_tasks.first().order_item_id if pending_tasks else None,
     }
     return render(request, 'scan_part.html', context)
 
@@ -1467,34 +1712,24 @@ def scan_part(request):
 @login_required
 @staff_or_representative_required
 def scan_part_cnc(request):
-    """
-    اسکن قطعه در ایستگاه CNC (AJAX):
-    - تکمیل تسک CNC
-    - دانلود خودکار فایل برنامه
-    """
     if request.method != 'POST':
         return redirect('scan_part')
 
     barcode = request.POST.get('barcode', '').strip()
     if not barcode:
-        messages.error(request, "لطفاً بارکد قطعه را وارد کنید.")
-        return redirect('scan_part')
+        return JsonResponse({'success': False, 'error': 'بارکد خالی است.'}, status=400)
 
-    # حذف پسوند .cnc احتمالی
     clean_barcode = re.sub(r'\.cnc$', '', barcode, flags=re.IGNORECASE)
     part = Part.objects.filter(f3=clean_barcode).first()
     if not part:
-        messages.error(request, f"قطعه‌ای با بارکد '{barcode}' یافت نشد.")
-        return redirect('scan_part')
+        return JsonResponse({'success': False, 'error': f"قطعه‌ای با بارکد '{barcode}' یافت نشد."}, status=404)
 
     if not hasattr(request.user, 'workerprofile'):
-        messages.error(request, "پروفایل کاری شما تعریف نشده است.")
-        return redirect('dashboard')
+        return JsonResponse({'success': False, 'error': 'پروفایل کاری شما تعریف نشده است.'}, status=403)
 
     worker_stage = request.user.workerprofile.stage
     if worker_stage != 'cnc':
-        messages.error(request, "شما مجاز به اسکن در ایستگاه CNC نیستید.")
-        return redirect('dashboard')
+        return JsonResponse({'success': False, 'error': 'شما مجاز به اسکن در ایستگاه CNC نیستید.'}, status=403)
 
     task = ProductionTask.objects.filter(
         part=part,
@@ -1503,35 +1738,69 @@ def scan_part_cnc(request):
     ).first()
 
     if not task:
-        messages.error(request, f"هیچ  در انتظاری برای قطعه '{part.name}' در ایستگاه CNC یافت نشد.")
-        return redirect('scan_part')
+        return JsonResponse({'success': False, 'error': f"هیچ  در انتظاری برای قطعه '{part.name}' در ایستگاه CNC یافت نشد."}, status=404)
+
+    if task.is_manual_item_task:
+        return JsonResponse({'success': False, 'error': 'این تسک نوع عملیات مشترک دارد و از این مسیر قابل پردازش نیست.'}, status=400)
+
+    is_first_scan = task.completed_quantity == 0
 
     with transaction.atomic():
-        task.status = 'done'
-        task.scanned_by = request.user
-        task.save()
+        if is_first_scan:
+            task.status = 'done'
+            task.scanned_by = request.user
+            task.save()
+        else:
+            task.completed_quantity += 1
+            if task.completed_quantity > task.quantity:
+                task.completed_quantity = task.quantity
+            if task.completed_quantity >= task.quantity:
+                task.status = 'done'
+                task.scanned_by = request.user
+            task.save()
 
-    # آماده‌سازی فایل
-    source_dir = getattr(settings, 'CNC_SOURCE_DIR', '')
-    extension = getattr(settings, 'CNC_FILE_EXTENSION', '.cnc')
+    if is_first_scan:
+        source_dir = getattr(settings, 'CNC_SOURCE_DIR', '')
+        extension = getattr(settings, 'CNC_FILE_EXTENSION', '.cnc')
+        file_barcode = re.sub(r'\.item\d+$', '', part.f3)
+        filename = f"{file_barcode}{extension}"
+        file_path = os.path.join(source_dir, filename)
 
-    # حذف .itemX از f3 برای یافتن فایل فیزیکی
-    file_barcode = re.sub(r'\.item\d+$', '', part.f3)
-    filename = f"{file_barcode}{extension}"
-    file_path = os.path.join(source_dir, filename)
+        from .utils import get_item_task_progress_for_station
+        download_url = reverse('download_cnc_file', args=[file_barcode])
 
-    if not os.path.exists(file_path):
-        messages.warning(
-            request,
-            f"✅ تسک CNC تکمیل شد، اما فایل '{filename}' در سرور یافت نشد."
-        )
-        return redirect('scan_part')
+        if not os.path.exists(file_path):
+            return JsonResponse({
+                'success': True,
+                'status': 'done',
+                'message': f"✅ تسک CNC تکمیل شد، اما فایل '{filename}' در سرور یافت نشد.",
+                'completed_quantity': task.completed_quantity,
+                'quantity': task.quantity,
+                'item_tasks': get_item_task_progress_for_station(task.order_item_id, 'cnc'),
+                'download_url': download_url,
+            })
 
-    with open(file_path, 'rb') as f:
-        response = HttpResponse(f.read(), content_type='application/octet-stream')
-        response['Content-Disposition'] = f'attachment; filename="{filename}"'
-        response['X-CNC-Status'] = 'success'
-        return response
+        return JsonResponse({
+            'success': True,
+            'status': 'done',
+            'message': '✅  CNC تکمیل شد.',
+            'task_id': task.id,
+            'completed_quantity': task.completed_quantity,
+            'quantity': task.quantity,
+            'item_tasks': get_item_task_progress_for_station(task.order_item_id, 'cnc'),
+            'download_url': download_url,
+        })
+    else:
+        from .utils import get_item_task_progress_for_station
+        return JsonResponse({
+            'success': True,
+            'status': task.status,
+            'message': f"✅  CNC: {task.completed_quantity} از {task.quantity} ثبت شد.",
+            'task_id': task.id,
+            'completed_quantity': task.completed_quantity,
+            'quantity': task.quantity,
+            'item_tasks': get_item_task_progress_for_station(task.order_item_id, 'cnc'),
+        })
 
 @login_required
 @staff_or_representative_required
@@ -1565,34 +1834,24 @@ def download_cnc_file(request, barcode):
 @login_required
 @staff_or_representative_required
 def scan_part_dr(request):
-    """
-    اسکن قطعه در ایستگاه سوراخکاری (dr):
-    - تکمیل تسک
-    - دانلود خودکار فایل XML
-    """
     if request.method != 'POST':
         return redirect('scan_part')
 
     barcode = request.POST.get('barcode', '').strip()
     if not barcode:
-        messages.error(request, "لطفاً بارکد قطعه را وارد کنید.")
-        return redirect('scan_part')
+        return JsonResponse({'success': False, 'error': 'بارکد خالی است.'}, status=400)
 
-    # حذف پسوند احتمالی
     clean_barcode = re.sub(r'\.(scx)$', '', barcode, flags=re.IGNORECASE)
     part = Part.objects.filter(f3=clean_barcode).first()
     if not part:
-        messages.error(request, f"قطعه‌ای با بارکد '{barcode}' یافت نشد.")
-        return redirect('scan_part')
+        return JsonResponse({'success': False, 'error': f"قطعه‌ای با بارکد '{barcode}' یافت نشد."}, status=404)
 
     if not hasattr(request.user, 'workerprofile'):
-        messages.error(request, "پروفایل کاری شما تعریف نشده است.")
-        return redirect('dashboard')
+        return JsonResponse({'success': False, 'error': 'پروفایل کاری شما تعریف نشده است.'}, status=403)
 
     worker_stage = request.user.workerprofile.stage
     if worker_stage != 'dr':
-        messages.error(request, "شما مجاز به اسکن در ایستگاه سوراخکاری نیستید.")
-        return redirect('dashboard')
+        return JsonResponse({'success': False, 'error': 'شما مجاز به اسکن در ایستگاه سوراخکاری نیستید.'}, status=403)
 
     task = ProductionTask.objects.filter(
         part=part,
@@ -1601,35 +1860,69 @@ def scan_part_dr(request):
     ).first()
 
     if not task:
-        messages.error(request, f"هیچ  در انتظاری برای قطعه '{part.name}' در ایستگاه سوراخکاری یافت نشد.")
-        return redirect('scan_part')
+        return JsonResponse({'success': False, 'error': f"هیچ  در انتظاری برای قطعه '{part.name}' در ایستگاه سوراخکاری یافت نشد."}, status=404)
+
+    if task.is_manual_item_task:
+        return JsonResponse({'success': False, 'error': 'این تسک نوع عملیات مشترک دارد و از این مسیر قابل پردازش نیست.'}, status=400)
+
+    is_first_scan = task.completed_quantity == 0
 
     with transaction.atomic():
-        task.status = 'done'
-        task.scanned_by = request.user
-        task.save()
+        if is_first_scan:
+            task.status = 'done'
+            task.scanned_by = request.user
+            task.save()
+        else:
+            task.completed_quantity += 1
+            if task.completed_quantity > task.quantity:
+                task.completed_quantity = task.quantity
+            if task.completed_quantity >= task.quantity:
+                task.status = 'done'
+                task.scanned_by = request.user
+            task.save()
 
-    # آماده‌سازی فایل XML
-    source_dir = getattr(settings, 'DR_SOURCE_DIR', '')
-    extension = getattr(settings, 'DR_FILE_EXTENSION', '.scx')
+    if is_first_scan:
+        source_dir = getattr(settings, 'DR_SOURCE_DIR', '')
+        extension = getattr(settings, 'DR_FILE_EXTENSION', '.scx')
+        file_barcode = re.sub(r'\.item\d+$', '', part.f3)
+        filename = f"{file_barcode}{extension}"
+        file_path = os.path.join(source_dir, filename)
 
-    # حذف .itemX از f3 برای یافتن فایل فیزیکی
-    file_barcode = re.sub(r'\.item\d+$', '', part.f3)
-    filename = f"{file_barcode}{extension}"
-    file_path = os.path.join(source_dir, filename)
+        from .utils import get_item_task_progress_for_station
+        download_url = reverse('download_dr_file', args=[file_barcode])
 
-    if not os.path.exists(file_path):
-        messages.warning(
-            request,
-            f"✅  سوراخکاری تکمیل شد، اما فایل '{filename}' در سرور یافت نشد."
-        )
-        return redirect('scan_part')
+        if not os.path.exists(file_path):
+            return JsonResponse({
+                'success': True,
+                'status': 'done',
+                'message': f"✅  سوراخکاری تکمیل شد، اما فایل '{filename}' در سرور یافت نشد.",
+                'completed_quantity': task.completed_quantity,
+                'quantity': task.quantity,
+                'item_tasks': get_item_task_progress_for_station(task.order_item_id, 'dr'),
+                'download_url': download_url,
+            })
 
-    with open(file_path, 'rb') as f:
-        response = HttpResponse(f.read(), content_type='application/xml')
-        response['Content-Disposition'] = f'attachment; filename="{filename}"'
-        response['X-DR-Status'] = 'success'
-        return response
+        return JsonResponse({
+            'success': True,
+            'status': 'done',
+            'message': '✅  سوراخکاری تکمیل شد.',
+            'task_id': task.id,
+            'completed_quantity': task.completed_quantity,
+            'quantity': task.quantity,
+            'item_tasks': get_item_task_progress_for_station(task.order_item_id, 'dr'),
+            'download_url': download_url,
+        })
+    else:
+        from .utils import get_item_task_progress_for_station
+        return JsonResponse({
+            'success': True,
+            'status': task.status,
+            'message': f"✅  سوراخکاری: {task.completed_quantity} از {task.quantity} ثبت شد.",
+            'task_id': task.id,
+            'completed_quantity': task.completed_quantity,
+            'quantity': task.quantity,
+            'item_tasks': get_item_task_progress_for_station(task.order_item_id, 'dr'),
+        })
 
 @login_required
 @staff_or_representative_required

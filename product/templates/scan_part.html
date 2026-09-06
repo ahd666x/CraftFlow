@@ -4,8 +4,7 @@
 {% block content %}
 <div class="container-fluid mt-4">
     <div class="row">
-        <!-- ستون سمت راست: فرم اسکن -->
-        <div class="col-lg-4 mb-4">
+        <div class="col-lg-5 mb-4">
             <div class="card shadow">
                 <div class="card-header bg-primary text-white text-center">
                     <h5 class="mb-0">اسکن بارکد قطعه</h5>
@@ -22,12 +21,13 @@
                             <label for="barcode" class="form-label fw-bold">بارکد را وارد کنید:</label>
                             <input type="text" name="barcode" id="barcode"
                                    class="form-control form-control-lg text-center"
-                                   placeholder="مثال: k.1.1840x1220.item9" autofocus>
+                                   placeholder="مثال: k.1.1840x1220.item9" autofocus autocomplete="off">
                         </div>
                         <div class="d-grid">
                             <button type="submit" class="btn btn-success btn-lg">ثبت و تکمیل</button>
                         </div>
                     </form>
+                    <div id="scan-feedback" class="mt-3"></div>
                 </div>
                 <div class="card-footer text-center">
                     <span class="badge bg-info text-dark p-2 fs-6">
@@ -36,209 +36,303 @@
                 </div>
             </div>
 
-            <!-- {% if worker_stage == 'cnc' %}
-            <div class="card shadow mt-4">
-                <div class="card-header bg-secondary text-white">
-                    <h6 class="mb-0"><i class="fas fa-download me-2"></i>دانلود مستقیم فایل CNC</h6>
-                </div>
-                <div class="card-body">
-                    <div class="input-group">
-                        <input type="text" id="cnc-download-barcode" class="form-control" placeholder="بارکد قطعه را وارد کنید">
-                        <button class="btn btn-outline-primary" type="button" onclick="downloadCNCFile()">
-                            <i class="fas fa-download"></i> دانلود
-                        </button>
-                    </div>
-                    <small class="text-muted d-block mt-2">می‌توانید بدون تکمیل تسک، فایل CNC را دریافت کنید.</small>
-                </div>
+            <div class="mt-3">
+                <button id="undo-scan-btn" class="btn btn-outline-warning w-100" style="display:none;">
+                    <i class="fas fa-undo"></i> لغو آخرین اسکن اشتباه
+                </button>
             </div>
-            {% endif %} -->
-
-            <!-- {% if worker_stage == 'dr' %}
-            <div class="card shadow mt-4">
-                <div class="card-header bg-secondary text-white">
-                    <h6 class="mb-0"><i class="fas fa-download me-2"></i>دانلود مستقیم فایل سوراخکاری (XML)</h6>
-                </div>
-                <div class="card-body">
-                    <div class="input-group">
-                        <input type="text" id="dr-download-barcode" class="form-control" placeholder="بارکد قطعه را وارد کنید">
-                        <button class="btn btn-outline-primary" type="button" onclick="downloadDRFile()">
-                            <i class="fas fa-download"></i> دانلود
-                        </button>
-                    </div>
-                    <small class="text-muted d-block mt-2">می‌توانید بدون تکمیل تسک، فایل XML را دریافت کنید.</small>
-                </div>
-            </div>
-            {% endif %} -->
         </div>
 
-        <!-- ستون سمت چپ: لیست کارهای آماده -->
-        <div class="col-lg-8">
-            <div class="card shadow">
-                <div class="card-header bg-info text-white d-flex justify-content-between align-items-center">
-                    <h5 class="mb-0">لیست کارهای آماده انجام</h5>
-                    <span class="badge bg-light text-dark fs-6">{{ pending_tasks.count }}</span>
+        <div class="col-lg-7">
+            <div id="item-progress-card" class="card shadow mb-3" style="display:none;">
+                <div class="card-header bg-info text-white">
+                    <h5 class="mb-0">پیشرفت آیتم</h5>
+                </div>
+                <div class="card-body">
+                    <div class="d-flex justify-content-between mb-1">
+                        <span id="item-product-name" class="fw-bold"></span>
+                        <span id="item-order-number" class="text-muted"></span>
+                    </div>
+                    <div class="progress" style="height: 20px;">
+                        <div id="item-progress-bar" class="progress-bar" role="progressbar" style="width:0%"></div>
+                    </div>
+                    <div class="d-flex justify-content-between mt-1">
+                        <small id="item-progress-text" class="text-muted"></small>
+                        <small id="item-progress-percent" class="text-muted"></small>
+                    </div>
+                </div>
+            </div>
+
+            <div id="item-tasks-card" class="card shadow mb-3" style="display:none;">
+                <div class="card-header bg-secondary text-white">
+                    <h5 class="mb-0">قطعات این آیتم در این ایستگاه</h5>
                 </div>
                 <div class="card-body p-0">
-                    <div class="table-responsive" style="max-height: 600px; overflow-y: auto;">
+                    <div class="table-responsive">
                         <table class="table table-hover align-middle mb-0">
-                            <thead class="table-light sticky-top">
+                            <thead class="table-light">
                                 <tr>
-                                    <th># سفارش</th>
                                     <th>نام قطعه</th>
-                                    <th>بارکد</th>
                                     <th>تعداد</th>
+                                    <th>وضعیت</th>
                                     <th>عملیات</th>
                                 </tr>
                             </thead>
-                            <tbody>
-                                {% for task in pending_tasks %}
-                                <tr>
-                                    <td><strong>{{ task.order.id }}</strong></td>
-                                    <td>{{ task.part.name }}-{{ task.part.pname }}</td>
-                                    <td><code>{{ task.part.f3 }}</code></td>
-                                    <td><span class="badge bg-warning text-dark">{{ task.quantity }}</span></td>
-                                    <td>
-                                        <form method="post" onsubmit="return confirm('')">
-                                            {% csrf_token %}
-                                            <input type="hidden" name="task_id" value="{{ task.id }}">
-                                            <button type="submit" class="btn btn-sm btn-outline-success">
-                                                <i class="fas fa-check"></i> انجام شد
-                                            </button>
-                                        </form>
-                                    </td>
-                                </tr>
-                                {% empty %}
-                                <tr>
-                                    <td colspan="5" class="text-center py-4 text-muted">
-                                        <i class="fas fa-check-circle fa-2x mb-2 d-block"></i>
-                                        هیچ کاری در انتظار نیست.
-                                    </td>
-                                </tr>
-                                {% endfor %}
+                            <tbody id="item-tasks-body">
                             </tbody>
                         </table>
                     </div>
                 </div>
-                <div class="card-footer text-muted small">
-                    <!-- <i class="fas fa-info-circle"></i> با اسکن بارکد یا کلیک روی دکمه «انجام شد» تسک تکمیل می‌شود. -->
+            </div>
+        </div>
+    </div>
+
+    <div class="row mt-2">
+        <div class="col-12">
+            <div class="card shadow">
+                <div class="card-header bg-warning text-dark">
+                    <h5 class="mb-0">کارهای آماده انجام (گروه‌بندی شده)</h5>
+                </div>
+                <div class="card-body p-0">
+                    {% for key, group in grouped_tasks.items %}
+                    <div class="border-bottom p-3">
+                        <div class="d-flex justify-content-between align-items-center mb-2">
+                            <strong>سفارش {{ group.order.id }} - {{ group.order_item.product.name }}</strong>
+                            <span class="badge bg-secondary">آیتم {{ group.order_item.id }}</span>
+                        </div>
+                        <div class="table-responsive">
+                            <table class="table table-sm table-hover align-middle mb-0">
+                                <thead class="table-light">
+                                    <tr>
+                                        <th>نام قطعه</th>
+                                        <th>بارکد</th>
+                                        <th>تعداد</th>
+                                        <th>عملیات</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {% for task in group.tasks %}
+                                    <tr>
+                                        <td>{{ task.part.name }}-{{ task.part.pname }}</td>
+                                        <td><code>{{ task.part.f3 }}</code></td>
+                                        <td><span class="badge bg-warning text-dark">{{ task.quantity }}</span></td>
+                                        <td>
+                                            <form method="post" class="d-inline task-done-form" data-task-id="{{ task.id }}">
+                                                {% csrf_token %}
+                                                <button type="submit" class="btn btn-sm btn-outline-success">
+                                                    <i class="fas fa-check"></i> انجام شد
+                                                </button>
+                                            </form>
+                                        </td>
+                                    </tr>
+                                    {% endfor %}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                    {% empty %}
+                    <div class="text-center py-4 text-muted">
+                        <i class="fas fa-check-circle fa-2x mb-2 d-block"></i>
+                        هیچ کاری در انتظار نیست.
+                    </div>
+                    {% endfor %}
                 </div>
             </div>
         </div>
     </div>
 </div>
 
-<!-- Font Awesome -->
-<!-- <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css"> -->
-
-{% if worker_stage == 'cnc' %}
 <script>
-    // دانلود مستقیم فایل CNC
-    function downloadCNCFile() {
-        let barcode = document.getElementById('cnc-download-barcode').value.trim();
-        if (!barcode) {
-            alert('لطفاً بارکد قطعه را وارد کنید.');
-            return;
-        }
-        barcode = barcode.replace(/\.cnc$/i, '');
-        window.open(`/cnc/download/${encodeURIComponent(barcode)}/`, '_blank');
-    }
+let lastScannedTaskId = null;
 
-    // ارسال AJAX برای اسکن در CNC
-    const scanFormCnc = document.querySelector('form[action*="scan_part_cnc"]');
-    if (scanFormCnc) {
-        scanFormCnc.addEventListener('submit', async function(e) {
+function renderItemTasks(itemTasks) {
+    const tbody = document.getElementById('item-tasks-body');
+    tbody.innerHTML = '';
+    if (!itemTasks || itemTasks.length === 0) {
+        document.getElementById('item-tasks-card').style.display = 'none';
+        return;
+    }
+    document.getElementById('item-tasks-card').style.display = 'block';
+    itemTasks.forEach(function(t) {
+        const tr = document.createElement('tr');
+        let rowClass = '';
+        if (t.completed_quantity >= t.quantity) {
+            rowClass = 'table-success';
+        } else if (t.completed_quantity > 0) {
+            rowClass = 'table-warning';
+        }
+        tr.className = rowClass;
+
+        let actions = '';
+        if (t.is_manual_item_task) {
+            actions = `
+                <a href="/media/${t.manual_reference_file}" class="btn btn-sm btn-outline-primary" download>
+                    <i class="fas fa-download"></i> دانلود فایل مرجع
+                </a>
+                <button class="btn btn-sm btn-outline-success ms-1 manual-progress-btn" data-task-id="${t.task_id}">
+                    <i class="fas fa-check"></i> انجام شد
+                </button>
+            `;
+        } else {
+            const downloadUrl = workerStage === 'cnc' ? `/cnc/download/${encodeURIComponent(t.label)}/` : `/dr/download/${encodeURIComponent(t.label)}/`;
+            actions = `
+                <a href="${downloadUrl}" class="btn btn-sm btn-outline-primary" download>
+                    <i class="fas fa-download"></i> دانلود
+                </a>
+            `;
+        }
+
+        const progressBar = (t.completed_quantity > 0 && t.completed_quantity < t.quantity)
+            ? `<div class="progress mt-1" style="height:8px;"><div class="progress-bar" style="width:${Math.round(t.completed_quantity/t.quantity*100)}%"></div></div><small>${t.completed_quantity} از ${t.quantity}</small>`
+            : '';
+
+        tr.innerHTML = `
+            <td>${t.label}</td>
+            <td><span class="badge bg-warning text-dark">${t.quantity}</span> ${progressBar}</td>
+            <td><span class="badge ${t.status === 'done' ? 'bg-success' : 'bg-secondary'}">${t.status}</span></td>
+            <td>${actions}</td>
+        `;
+        tbody.appendChild(tr);
+    });
+
+    document.querySelectorAll('.manual-progress-btn').forEach(function(btn) {
+        btn.addEventListener('click', function(e) {
+            e.preventDefault();
+            const tid = this.getAttribute('data-task-id');
+            fetch(`/tasks/manual/${tid}/progress/`, {
+                method: 'POST',
+                headers: {'X-CSRFToken': '{{ csrf_token }}', 'X-Requested-With': 'XMLHttpRequest'},
+            }).then(r => r.json()).then(data => {
+                if (data.success) {
+                    refreshCurrentView();
+                } else {
+                    alert('خطا: ' + data.error);
+                }
+            });
+        });
+    });
+}
+
+function refreshCurrentView() {
+    const form = document.getElementById('scan-form');
+    fetch(form.action, {
+        method: 'GET',
+        headers: {'X-Requested-With': 'XMLHttpRequest'},
+    }).then(r => r.json()).then(data => {
+        if (data.item_tasks) {
+            renderItemTasks(data.item_tasks);
+            updateItemCard(data);
+        }
+    }).catch(() => {});
+}
+
+function updateItemCard(data) {
+    if (!data || !data.item_tasks || data.item_tasks.length === 0) {
+        document.getElementById('item-progress-card').style.display = 'none';
+        document.getElementById('item-tasks-card').style.display = 'none';
+        return;
+    }
+    const orderId = '{{ item_order_id|default:"" }}';
+    const itemId = data.item_tasks[0].order_item_id || '{{ item_order_item_id|default:"" }}';
+    document.getElementById('item-progress-card').style.display = 'block';
+    document.getElementById('item-order-number').textContent = 'سفارش ' + orderId + ' | آیتم ' + itemId;
+    const total = data.item_tasks.reduce((s, t) => s + t.quantity, 0);
+    const done = data.item_tasks.filter(t => t.completed_quantity >= t.quantity).length;
+    const pct = total > 0 ? Math.round(done / total * 100) : 0;
+    document.getElementById('item-progress-bar').style.width = pct + '%';
+    document.getElementById('item-progress-text').textContent = `${done} از ${total} قطعه در این ایستگاه تمام شد`;
+    document.getElementById('item-progress-percent').textContent = pct + '%';
+}
+
+function handleScanResponse(data) {
+    const feedback = document.getElementById('scan-feedback');
+    if (data.success) {
+        feedback.innerHTML = `<div class="alert alert-success py-2">${data.message}</div>`;
+        if (data.download_url) {
+            window.open(data.download_url, '_blank');
+        }
+        if (data.item_tasks) {
+            renderItemTasks(data.item_tasks);
+            updateItemCard(data);
+        }
+        lastScannedTaskId = data.task_id || lastScannedTaskId;
+        document.getElementById('undo-scan-btn').style.display = lastScannedTaskId ? 'block' : 'none';
+        document.getElementById('barcode').value = '';
+        document.getElementById('barcode').focus();
+    } else {
+        feedback.innerHTML = `<div class="alert alert-danger py-2">${data.error}</div>`;
+    }
+    setTimeout(() => { feedback.innerHTML = ''; }, 4000);
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+    const form = document.getElementById('scan-form');
+    if (form) {
+        form.addEventListener('submit', async function(e) {
             e.preventDefault();
             const formData = new FormData(this);
-            let barcode = formData.get('barcode').trim().replace(/\.cnc$/i, '');
-            formData.set('barcode', barcode);
-
             try {
                 const response = await fetch(this.action, {
                     method: 'POST',
-                    body: formData
+                    body: formData,
+                    headers: {'X-Requested-With': 'XMLHttpRequest'},
                 });
-
-                if (response.ok && response.headers.get('Content-Type').includes('application/octet-stream')) {
-                    const blob = await response.blob();
-                    const url = window.URL.createObjectURL(blob);
-                    const a = document.createElement('a');
-                    a.href = url;
-                    const disposition = response.headers.get('Content-Disposition');
-                    a.download = disposition ? disposition.split('filename=')[1].replace(/"/g, '') : 'file.cnc';
-                    a.click();
-                    window.URL.revokeObjectURL(url);
-
-                    alert('✅  CNC تکمیل و فایل دانلود شد.');
-                    document.getElementById('barcode').value = '';
-                    document.getElementById('barcode').focus();
-                } else {
-                    const errorText = await response.text();
-                    alert('⚠️ ' + (errorText || 'خطایی رخ داد.'));
-                    window.location.reload();
-                }
+                const data = await response.json();
+                handleScanResponse(data);
             } catch (error) {
-                alert('❌ خطای شبکه: ' + error.message);
-                window.location.reload();
+                const feedback = document.getElementById('scan-feedback');
+                feedback.innerHTML = `<div class="alert alert-danger py-2">خطای شبکه: ${error.message}</div>`;
             }
         });
     }
-</script>
-{% endif %}
 
-{% if worker_stage == 'dr' %}
-<script>
-    // دانلود مستقیم فایل سوراخکاری (XML)
-    function downloadDRFile() {
-        let barcode = document.getElementById('dr-download-barcode').value.trim();
-        if (!barcode) {
-            alert('لطفاً بارکد قطعه را وارد کنید.');
-            return;
-        }
-        barcode = barcode.replace(/\.xml$/i, '');
-        window.open(`/dr/download/${encodeURIComponent(barcode)}/`, '_blank');
-    }
-
-    // ارسال AJAX برای اسکن در سوراخکاری
-    const scanFormDr = document.querySelector('form[action*="scan_part_dr"]');
-    if (scanFormDr) {
-        scanFormDr.addEventListener('submit', async function(e) {
+    document.querySelectorAll('.task-done-form').forEach(function(f) {
+        f.addEventListener('submit', async function(e) {
             e.preventDefault();
             const formData = new FormData(this);
-            let barcode = formData.get('barcode').trim().replace(/\.xml$/i, '');
-            formData.set('barcode', barcode);
-
             try {
                 const response = await fetch(this.action, {
                     method: 'POST',
-                    body: formData
+                    body: formData,
+                    headers: {'X-Requested-With': 'XMLHttpRequest'},
                 });
-
-                if (response.ok && response.headers.get('Content-Type').includes('application/xml')) {
-                    const blob = await response.blob();
-                    const url = window.URL.createObjectURL(blob);
-                    const a = document.createElement('a');
-                    a.href = url;
-                    const disposition = response.headers.get('Content-Disposition');
-                    a.download = disposition ? disposition.split('filename=')[1].replace(/"/g, '') : 'file.xml';
-                    a.click();
-                    window.URL.revokeObjectURL(url);
-
-                    alert('✅  سوراخکاری تکمیل و فایل XML دانلود شد.');
-                    document.getElementById('barcode').value = '';
-                    document.getElementById('barcode').focus();
+                const data = await response.json();
+                if (data.success) {
+                    location.reload();
                 } else {
-                    const errorText = await response.text();
-                    alert('⚠️ ' + (errorText || 'خطایی رخ داد.'));
-                    window.location.reload();
+                    alert(data.error || 'خطا در تکمیل تسک.');
                 }
             } catch (error) {
-                alert('❌ خطای شبکه: ' + error.message);
-                window.location.reload();
+                alert('خطای شبکه: ' + error.message);
             }
         });
-    }
-</script>
-{% endif %}
+    });
 
-<!-- DEBUG: worker_stage = "{{ worker_stage }}" -->
+    const undoBtn = document.getElementById('undo-scan-btn');
+    if (undoBtn) {
+        undoBtn.addEventListener('click', function() {
+            if (!lastScannedTaskId) {
+                alert('اسکن قبلی ثبت نشده است.');
+                return;
+            }
+            fetch(`/tasks/${lastScannedTaskId}/undo-scan/`, {
+                method: 'POST',
+                headers: {'X-CSRFToken': '{{ csrf_token }}', 'X-Requested-With': 'XMLHttpRequest'},
+            }).then(r => r.json()).then(data => {
+                if (data.success) {
+                    location.reload();
+                } else {
+                    alert(data.error || 'خطا در لغو.');
+                }
+            }).catch(err => alert('خطای شبکه: ' + err.message));
+        });
+    }
+
+    const initialItemTasks = JSON.parse('{{ item_tasks_json|escapejs }}');
+    if (initialItemTasks && initialItemTasks.length > 0) {
+        renderItemTasks(initialItemTasks);
+        updateItemCard({item_tasks: initialItemTasks});
+    }
+});
+</script>
 {% endblock %}

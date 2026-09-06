@@ -1,0 +1,122 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block title %}آرشیو فایل‌ها{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h2 class="mb-0">آرشیو فایل‌های CNC / DR</h2>
+        <a href="{% url 'dashboard' %}" class="btn btn-secondary">
+            <i class="bi bi-arrow-right"></i> بازگشت به داشبورد
+        </a>
+    </div>
+
+    {% if messages %}
+    {% for message in messages %}
+    <div class="alert alert-{{ message.tags }} alert-dismissible fade show" role="alert">
+        {{ message }}
+        <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+    </div>
+    {% endfor %}
+    {% endif %}
+
+    <div class="card shadow mb-4">
+        <div class="card-header bg-primary text-white">
+            <h5 class="mb-0">آپلود فایل</h5>
+        </div>
+        <div class="card-body">
+            <form method="post" enctype="multipart/form-data" class="row g-3 align-items-end">
+                {% csrf_token %}
+                <div class="col-md-3">
+                    <label class="form-label fw-bold">نوع آرشیو</label>
+                    <select name="archive_type" class="form-select">
+                        <option value="cnc" {% if archive_type == 'cnc' %}selected{% endif %}>CNC ({{ expected_ext }})</option>
+                        <option value="dr" {% if archive_type == 'dr' %}selected{% endif %}>DR ({{ expected_ext }})</option>
+                    </select>
+                </div>
+                <div class="col-md-5">
+                    <label class="form-label fw-bold">فایل</label>
+                    <input type="file" name="archive_file" class="form-control" required>
+                </div>
+                <div class="col-md-2">
+                    <button type="submit" class="btn btn-success w-100">آپلود</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <div class="card shadow">
+        <div class="card-header bg-info text-white d-flex justify-content-between align-items-center">
+            <h5 class="mb-0">فایل‌های موجود</h5>
+            <form method="get" class="d-flex">
+                <input type="hidden" name="type" value="{{ archive_type }}">
+                <input type="text" name="q" class="form-control form-control-sm me-2" placeholder="جستجو..." value="{{ search_query }}">
+                <button type="submit" class="btn btn-sm btn-light">جستجو</button>
+            </form>
+        </div>
+        <div class="card-body p-0">
+            <div class="table-responsive">
+                <table class="table table-hover align-middle mb-0">
+                    <thead class="table-light">
+                        <tr>
+                            <th>نام فایل</th>
+                            <th>حجم</th>
+                            <th>تاریخ آخرین تغییر</th>
+                            <th>عملیات</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for f in files %}
+                        <tr>
+                            <td><code>{{ f.name }}</code></td>
+                            <td>{{ f.size|filesizeformat }}</td>
+                            <td>{{ f.modified|date:"Y/m/d H:i" }}</td>
+                            <td>
+                                <a href="{% url 'archive_download' archive_type=archive_type filename=f.name %}" class="btn btn-sm btn-outline-primary" download>
+                                    <i class="fas fa-download"></i> دانلود
+                                </a>
+                                <button class="btn btn-sm btn-outline-danger ms-1 archive-delete-btn" data-filename="{{ f.name }}" data-archive-type="{{ archive_type }}">
+                                    <i class="fas fa-trash"></i> حذف
+                                </button>
+                            </td>
+                        </tr>
+                        {% empty %}
+                        <tr>
+                            <td colspan="4" class="text-center py-4 text-muted">هیچ فایلی یافت نشد.</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    document.querySelectorAll('.archive-delete-btn').forEach(function(btn) {
+        btn.addEventListener('click', function() {
+            const filename = this.getAttribute('data-filename');
+            const archiveType = this.getAttribute('data-archive-type');
+            if (!confirm(`فایل ${filename} حذف شود؟`)) return;
+            fetch('{% url "archive_delete_file" %}', {
+                method: 'POST',
+                headers: {
+                    'X-CSRFToken': '{{ csrf_token }}',
+                    'X-Requested-With': 'XMLHttpRequest',
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({filename: filename, archive_type: archiveType}),
+            }).then(r => r.json()).then(data => {
+                if (data.success) {
+                    location.reload();
+                } else {
+                    alert('خطا: ' + data.error);
+                }
+            });
+        });
+    });
+});
+</script>
+{% endblock %}
