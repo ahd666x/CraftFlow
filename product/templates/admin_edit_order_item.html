@@ -72,11 +72,17 @@ $(document).ready(function() {
                     $.each(data, function(i, product) {
                         $productSelect.append($('<option>', { value: product.id, text: product.name }));
                     });
-                    resetColorFields();
+                    var initialProduct = $productSelect.data('initial-product');
+                    if (initialProduct) {
+                        $productSelect.val(initialProduct);
+                        $productSelect.trigger('change');
+                    } else {
+                        resetColorFields();
+                    }
                 }
             });
         } else {
-            $('#id_product').html('<option value="">---------</option>');
+            $('#id_product').empty().append($('<option>', { value: '', text: '---------' }));
             resetColorFields();
         }
     });
@@ -94,13 +100,9 @@ $(document).ready(function() {
         }
     });
 
-    var initialProduct = $('#id_product').val();
-    if (initialProduct) {
-        fetch(`/ajax/load-product-colors/${initialProduct}/`)
-            .then(response => response.json())
-            .then(data => {
-                updateColorFields(data.defaults);
-            });
+    var initialCategory = $('#id_category').val();
+    if (initialCategory) {
+        $('#id_category').trigger('change');
     }
 
     function updateColorFields(defaults) {
@@ -129,11 +131,6 @@ $(document).ready(function() {
             const select = el.querySelector('select');
             if (select) select.value = '';
         });
-    }
-
-    var initialCategory = $('#id_category').val();
-    if (initialCategory) {
-        $('#id_category').trigger('change');
     }
 });
 </script>

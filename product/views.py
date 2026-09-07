@@ -326,7 +326,14 @@ def admin_edit_order_item(request, item_id):
         else:
             messages.error(request, '⚠️ خطا در ویرایش آیتم.')
     else:
-        item_form = EditOrderItemForm(instance=item)
+        item_form = EditOrderItemForm(
+            instance=item,
+            initial={
+                'category': item.product.category.id,
+                'product': item.product.id,
+            }
+        )
+        item_form.fields['product'].widget.attrs['data-initial-product'] = item.product.id
         color_form = ColorSelectionForm(initial={
             f'color_{part}': existing_colors.get(part, '')
             for part, _ in Color.PART_CHOICES
@@ -3156,7 +3163,14 @@ def customer_edit_order_item(request, item_id):
                 messages.success(request, "آیتم ویرایش شد.")
                 return redirect('customer_order_detail', order_id=item.order.id)
     else:
-        item_form = EditOrderItemForm(instance=item)
+        item_form = EditOrderItemForm(
+            instance=item,
+            initial={
+                'category': item.product.category.id,
+                'product': item.product.id,
+            }
+        )
+        item_form.fields['product'].widget.attrs['data-initial-product'] = item.product.id
         color_form = ColorSelectionForm(initial={
             f'color_{part}': existing_colors.get(part, '')
             for part, _ in Color.PART_CHOICES

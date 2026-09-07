@@ -90,8 +90,12 @@ $(document).ready(function() {
                     options += '<option value="' + product.id + '">' + product.name + '</option>';
                 });
                 $('#id_product').html(options);
-                if (selectedId) $('#id_product').val(selectedId);
-                resetColorFields();
+                if (selectedId) {
+                    $('#id_product').val(selectedId);
+                    $('#id_product').trigger('change');
+                } else {
+                    resetColorFields();
+                }
             }
         });
     }
@@ -135,19 +139,25 @@ $(document).ready(function() {
         }
     });
 
-    var initialProduct = $('#id_product').val();
-    if (initialProduct) {
-        fetch(`/ajax/load-product-colors/${initialProduct}/`)
-            .then(response => response.json())
-            .then(data => updateColorFields(data.defaults));
-    }
-
     $('#id_category').change(function() {
-        loadProducts($(this).val());
+        var categoryId = $(this).val();
+        if (categoryId) {
+            loadProducts(categoryId);
+        } else {
+            $('#id_product').html('<option value="">---------</option>');
+            resetColorFields();
+        }
     });
 
-    var initialCat = $('#id_category').val();
-    if (initialCat) loadProducts(initialCat, "{{ item_form.product.value|default:'' }}");
+    var initialCategory = $('#id_category').val();
+    if (initialCategory) {
+        var initialProduct = $('#id_product').data('initial-product');
+        if (initialProduct) {
+            loadProducts(initialCategory, initialProduct);
+        } else {
+            $('#id_category').trigger('change');
+        }
+    }
 });
 </script>
 {% endblock %}
