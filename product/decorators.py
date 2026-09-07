@@ -9,7 +9,7 @@ def admin_or_manager_required(view_func=None, redirect_url='/orderlist/'):
             return False
         if user.is_superuser:
             return True
-        # return user.groups.filter(name='1').exists()
+        return user.groups.filter(name__in=['1', '2', '3']).exists()
 
     decorator = user_passes_test(check_user, login_url=redirect_url)
     

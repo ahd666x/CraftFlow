@@ -4,11 +4,12 @@ from decimal import Decimal
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required, user_passes_test
 from django.core.paginator import Paginator
-from django.db.models import Q, Sum, Count, F, Case, When, Value, CharField, ProtectedError
+from django.db.models import Q, Sum, Count, F, Case, When, Value, CharField, ProtectedError, DecimalField
 from django.db.models.functions import Coalesce
 from django.http import JsonResponse, HttpResponseForbidden
 from django.shortcuts import get_object_or_404, render, redirect
 from django.template.loader import render_to_string
+from django.db.transaction import atomic
 from django.views.decorators.http import require_http_methods
 
 from product.decorators import admin_or_manager_required
@@ -42,7 +43,13 @@ def inventory_dashboard(request):
     total_materials = RawMaterial.objects.filter(is_active=True).count()
     total_suppliers = Supplier.objects.filter(is_active=True).count()
     low_stock = RawMaterial.objects.filter(is_active=True).annotate(
-        stock=Coalesce(Sum('movements__quantity'), 0)
+        stock=Sum(
+            Case(
+                When(movements__movement_type='consumption', then=-F('movements__quantity')),
+                default=F('movements__quantity'),
+                output_field=DecimalField()
+            )
+        )
     ).filter(stock__lte=F('min_stock_alert')).count()
 
     recent_movements = StockMovement.objects.select_related(
@@ -532,29 +539,30 @@ def purchase_order_receive(request, order_id):
     """تحویل کالای سفارش خرید و ایجاد StockMovement ورودی."""
     if request.headers.get('X-Requested-With') != 'XMLHttpRequest':
         return HttpResponseForbidden()
-    po = get_object_or_404(PurchaseOrder, pk=order_id)
-    if po.status == 'received':
-        return JsonResponse({'success': False, 'error': 'این سفارش قبلاً دریافت شده است.'})
+    with atomic():
+        po = PurchaseOrder.objects.select_for_update().get(pk=order_id)
+        if po.status == 'received':
+            return JsonResponse({'success': False, 'error': 'این سفارش قبلاً دریافت شده است.'})
 
-    total_received = Decimal('0')
-    for item in po.items.all():
-        qty = item.quantity - item.received_quantity
-        if qty > 0:
-            StockMovement.objects.create(
-                raw_material=item.raw_material,
-                movement_type='purchase',
-                quantity=qty,
-                unit_price=item.unit_price,
-                supplier=po.supplier,
-                note=f'فاکتور خرید PO-{po.id}',
-                created_by=request.user,
-            )
-            item.received_quantity = item.quantity
-            item.save(update_fields=['received_quantity'])
-            total_received += qty
+        total_received = Decimal('0')
+        for item in po.items.all():
+            qty = item.quantity - item.received_quantity
+            if qty > 0:
+                StockMovement.objects.create(
+                    raw_material=item.raw_material,
+                    movement_type='purchase',
+                    quantity=qty,
+                    unit_price=item.unit_price,
+                    supplier=po.supplier,
+                    note=f'فاکتور خرید PO-{po.id}',
+                    created_by=request.user,
+                )
+                item.received_quantity = item.quantity
+                item.save(update_fields=['received_quantity'])
+                total_received += qty
 
-    po.status = 'received'
-    po.save(update_fields=['status'])
+        po.status = 'received'
+        po.save(update_fields=['status'])
 
     return JsonResponse({'success': True, 'total_received': str(total_received)})
 

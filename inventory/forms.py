@@ -1,4 +1,5 @@
 from django import forms
+from django.core.exceptions import ValidationError
 from django.forms import inlineformset_factory
 from .models import Supplier, RawMaterialCategory, RawMaterial, StockMovement, PurchaseOrder, PurchaseOrderItem
 
@@ -45,7 +46,7 @@ class StockMovementForm(forms.ModelForm):
         widgets = {
             'raw_material': forms.Select(attrs={'class': 'form-select'}),
             'movement_type': forms.Select(attrs={'class': 'form-select'}),
-            'quantity': forms.NumberInput(attrs={'class': 'form-control', 'step': '0.01'}),
+            'quantity': forms.NumberInput(attrs={'class': 'form-control', 'step': '0.01', 'min': '0.01'}),
             'unit_price': forms.NumberInput(attrs={'class': 'form-control', 'min': '0'}),
             'supplier': forms.Select(attrs={'class': 'form-select'}),
             'note': forms.TextInput(attrs={'class': 'form-control', 'placeholder': 'یادداشت (اختیاری)'}),
@@ -55,6 +56,26 @@ class StockMovementForm(forms.ModelForm):
         super().__init__(*args, **kwargs)
         self.fields['supplier'].required = False
         self.fields['unit_price'].required = False
+
+    def clean(self):
+        cleaned_data = super().clean()
+        movement_type = cleaned_data.get('movement_type')
+        quantity = cleaned_data.get('quantity')
+        supplier = cleaned_data.get('supplier')
+        raw_material = cleaned_data.get('raw_material')
+
+        if quantity is not None and quantity <= 0:
+            raise ValidationError('مقدار باید بزرگتر از صفر باشد.')
+
+        if movement_type == 'purchase' and not supplier:
+            raise ValidationError('برای خرید/ورود باید تامین‌کننده انتخاب شود.')
+
+        if movement_type == 'consumption' and raw_material:
+            current = raw_material.current_stock
+            if current < quantity:
+                raise ValidationError(f'موجودی کافی نیست. موجودی فعلی: {current}')
+
+        return cleaned_data
 
 
 class PurchaseOrderForm(forms.ModelForm):

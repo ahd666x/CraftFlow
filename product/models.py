@@ -185,7 +185,6 @@ class Order(models.Model):
                         material=material,
                         length=length,
                         width=width,
-                        f3=new_f3,  # اضافه کردن f3 به کلید جستجو
                         defaults={
                             'name': part.name,
                             'grain': part.grain,

@@ -1,5 +1,6 @@
 from django.db import models
 from django.contrib.auth.models import User
+from django.db.models import Sum, Case, When, Value, DecimalField, F
 
 
 class Supplier(models.Model):
@@ -48,7 +49,15 @@ class RawMaterial(models.Model):
 
     @property
     def current_stock(self):
-        agg = self.movements.aggregate(total=models.Sum('quantity'))
+        agg = self.movements.aggregate(
+            total=Sum(
+                Case(
+                    When(movement_type='consumption', then=-F('quantity')),
+                    default=F('quantity'),
+                    output_field=DecimalField()
+                )
+            )
+        )
         return agg['total'] or 0
 
     @property
