@@ -2144,6 +2144,8 @@ def create_order(request):
                         )
 
             messages.success(request, f"سفارش شماره {order.id} برای مشتری {customer.name} (نماینده: {representative.username}) ایجاد شد.")
+            if 'add_another' in request.POST:
+                return redirect('create_order_step2', order_id=order.id)
             return redirect('order_detail', order_id=order.id)
         else:
             for field, errors in item_form.errors.items():
@@ -2917,6 +2919,8 @@ def customer_create_order(request):
                         Color.objects.create(part=part_value, code=code, orderitem=order_item)
 
             messages.success(request, 'سفارش جدید ایجاد شد.')
+            if 'add_another' in request.POST:
+                return redirect('customer_order_detail', order_id=order.id)
             return redirect('customer_order_detail', order_id=order.id)
         else:
             messages.error(request, 'لطفاً خطاهای فرم را بررسی کنید.')
