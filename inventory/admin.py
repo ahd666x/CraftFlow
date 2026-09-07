@@ -1,0 +1,56 @@
+from django.contrib import admin
+from .models import Supplier, RawMaterialCategory, RawMaterial, StockMovement, PurchaseOrder, PurchaseOrderItem
+
+
+@admin.register(Supplier)
+class SupplierAdmin(admin.ModelAdmin):
+    list_display = ['name', 'phone', 'is_active']
+    list_filter = ['is_active']
+    search_fields = ['name', 'phone']
+
+
+@admin.register(RawMaterialCategory)
+class RawMaterialCategoryAdmin(admin.ModelAdmin):
+    list_display = ['name']
+    search_fields = ['name']
+
+
+@admin.register(RawMaterial)
+class RawMaterialAdmin(admin.ModelAdmin):
+    list_display = ['name', 'category', 'code', 'unit', 'current_stock', 'min_stock_alert', 'stock_status', 'is_active']
+    list_filter = ['category', 'unit', 'is_active']
+    search_fields = ['name', 'code']
+    readonly_fields = ['current_stock']
+
+    def stock_status(self, obj):
+        badge_map = {'success': 'success', 'warning': 'warning', 'danger': 'danger'}
+        label_map = {'success': 'موجود', 'warning': 'کمبود', 'danger': 'تمام شده'}
+        status = obj.stock_status
+        return f'<span class="badge bg-{badge_map[status]}">{label_map[status]}</span>'
+    stock_status.short_description = 'وضعیت موجودی'
+    stock_status.allow_tags = True
+
+
+@admin.register(StockMovement)
+class StockMovementAdmin(admin.ModelAdmin):
+    list_display = ['raw_material', 'movement_type', 'quantity', 'unit_price', 'supplier', 'created_by', 'created_at']
+    list_filter = ['movement_type', 'created_at', 'raw_material__category']
+    search_fields = ['raw_material__name', 'note']
+    date_hierarchy = 'created_at'
+    autocomplete_fields = ['raw_material', 'supplier', 'reference_task']
+
+
+@admin.register(PurchaseOrder)
+class PurchaseOrderAdmin(admin.ModelAdmin):
+    list_display = ['id', 'supplier', 'status', 'created_at', 'created_by']
+    list_filter = ['status', 'created_at']
+    search_fields = ['supplier__name']
+    date_hierarchy = 'created_at'
+    autocomplete_fields = ['supplier']
+
+
+@admin.register(PurchaseOrderItem)
+class PurchaseOrderItemAdmin(admin.ModelAdmin):
+    list_display = ['purchase_order', 'raw_material', 'quantity', 'unit_price', 'received_quantity']
+    list_filter = ['purchase_order__status']
+    search_fields = ['raw_material__name']
