@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <title>لیست آماده بارگیری</title>
+    <style>
+        body { font-family: Tahoma, sans-serif; direction: rtl; font-size: 13px; margin: 15px; }
+        .header { text-align: center; margin-bottom: 8mm; }
+        table { width: 100%; border-collapse: collapse; }
+        th, td { border: 1px solid #000; padding: 4px 6px; text-align: center; font-size: 12px; }
+        th { background: #e0e0e0; }
+        @media print { body { margin: 0; } }
+    </style>
+</head>
+<body onload="window.print()">
+    <div class="header">
+        <h2>صنایع چوبی سلوی</h2>
+        <h4>لیست آماده بارگیری — نماینده: {{ representative_name }}</h4>
+        <div>تاریخ: {{ today|date:"Y/m/d" }}</div>
+    </div>
+    <table>
+        <thead>
+            <tr><th>ردیف</th><th>سفارش</th><th>محصول</th><th>مشتری</th><th>رنگ</th><th>شماره واحد</th></tr>
+        </thead>
+        <tbody>
+            {% for unit in units %}
+            <tr>
+                <td>{{ forloop.counter }}</td>
+                <td>{{ unit.order_item.order.number|default:unit.order_item.order.id }}/{{ unit.order_item.id }}</td>
+                <td>{{ unit.order_item.product.category.name }} {{ unit.order_item.product.name }}</td>
+                <td>{{ unit.order_item.order.customer.name }}</td>
+                <td>{{ unit.order_item.color_summary }}</td>
+                <td>{{ unit.unit_number }}</td>
+            </tr>
+            {% empty %}
+            <tr><td colspan="6">موردی وجود ندارد.</td></tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</body>
+</html>

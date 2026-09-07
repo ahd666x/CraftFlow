@@ -161,11 +161,16 @@ function renderItemTasks(itemTasks) {
         tr.className = rowClass;
 
         let actions = '';
-        const downloadUrl = workerStage === 'cnc' ? `/cnc/download/${encodeURIComponent(t.label)}/` : `/dr/download/${encodeURIComponent(t.label)}/`;
-        actions = `
-            <a href="${downloadUrl}" class="btn btn-sm btn-outline-primary" download>
-                <i class="fas fa-download"></i> دانلود
-            </a>
+        const downloadLabel = t.download_label ? encodeURIComponent(t.download_label) : '';
+        if (downloadLabel) {
+            const downloadUrl = workerStage === 'cnc' ? `/cnc/download/${downloadLabel}/` : `/dr/download/${downloadLabel}/`;
+            actions = `
+                <a href="${downloadUrl}" class="btn btn-sm btn-outline-primary" download>
+                    <i class="fas fa-download"></i> دانلود
+                </a>
+            `;
+        }
+        actions += `
             <button class="btn btn-sm btn-outline-success ms-1 mark-done-btn" data-task-id="${t.task_id}">
                 <i class="fas fa-check"></i> انجام شد
             </button>

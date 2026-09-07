@@ -1766,6 +1766,7 @@ def get_item_task_progress_for_station(order_item_id, station_name):
             'task_id': task.id,
             'order_item_id': task.order_item_id,
             'label': label,
+            'download_label': (task.part.f3 or '') if task.part else '',
             'completed_quantity': task.completed_quantity,
             'quantity': task.quantity,
             'status': task.status,

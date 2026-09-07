@@ -33,19 +33,37 @@
                 <div class="row align-items-center g-2 mb-3">
                     <div class="col-md-5">
                         <div class="input-group">
-                            <input type="text" name="q" class="form-control" placeholder="جستجو" value="{{ search_query|default:'' }}">
+                            <input type="text" name="q" class="form-control" 
+                                   placeholder="جستجو: شماره سفارش، نماینده، مشتری، نام کالا، شماره آیتم..." 
+                                   value="{{ search_query|default:'' }}">
                             <button class="btn btn-outline-secondary" type="submit">
                                 <i class="bi bi-search"></i>
                             </button>
                         </div>
                     </div>
-                    <div class="col-md-5">
-                        <div class="btn-group" role="group">
-                            <a href="?status=draft" class="btn btn-sm {% if status_filter == 'draft' %}btn-primary{% else %}btn-outline-secondary{% endif %}">پیش‌نویس</a>
-                            <a href="?status=planned" class="btn btn-sm {% if status_filter == 'planned' %}btn-primary{% else %}btn-outline-secondary{% endif %}">برنامه‌ریزی</a>
-                            <a href="?status=producing" class="btn btn-sm {% if status_filter == 'producing' %}btn-primary{% else %}btn-outline-secondary{% endif %}">تولید</a>
-                            <a href="?status=completed" class="btn btn-sm {% if status_filter == 'completed' %}btn-primary{% else %}btn-outline-secondary{% endif %}">تکمیل</a>
-                            <a href="?" class="btn btn-sm btn-outline-danger">پاک کردن فیلتر</a>
+                    <div class="col-md-7">
+                        <div class="row g-2 align-items-end">
+                            <div class="col-auto">
+                                <label class="form-label small mb-1">بسته‌بندی</label>
+                                <select name="packaging_status" class="form-select form-select-sm" onchange="this.form.submit()">
+                                    <option value="">همه</option>
+                                    <option value="none" {% if packaging_filter == 'none' %}selected{% endif %}>بدون واحد</option>
+                                    <option value="pending" {% if packaging_filter == 'pending' %}selected{% endif %}>در حال بسته‌بندی</option>
+                                    <option value="done" {% if packaging_filter == 'done' %}selected{% endif %}>تکمیل شده</option>
+                                </select>
+                            </div>
+                            <div class="col-auto">
+                                <label class="form-label small mb-1">ارسال</label>
+                                <select name="shipping_status" class="form-select form-select-sm" onchange="this.form.submit()">
+                                    <option value="">همه</option>
+                                    <option value="none" {% if shipping_filter == 'none' %}selected{% endif %}>بدون ارسال</option>
+                                    <option value="pending" {% if shipping_filter == 'pending' %}selected{% endif %}>در حال ارسال</option>
+                                    <option value="done" {% if shipping_filter == 'done' %}selected{% endif %}>ارسال شده</option>
+                                </select>
+                            </div>
+                            <div class="col-auto">
+                                <a href="?" class="btn btn-sm btn-outline-danger">پاک کردن فیلتر</a>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -53,13 +71,11 @@
         </div>
 
         <div class="table-responsive">
-            <table class="table table-hover mb-0">
+            <table class="table table-hover mb-0" id="ordersTable">
                 <thead class="table-dark">
                     <tr>
-                        <!-- چک‌باکس انتخاب همه -->
-                        <th style="width: 40px;">
-                            <input type="checkbox" id="select-all" form="batch-export-form">
-                        </th>
+                        <th style="width: 40px;"><input type="checkbox" id="select-all" form="batch-export-form"></th>
+                        <th style="width: 34px;"></th>
                         <th>شماره</th>
                         <th>نماینده</th>
                         <th>تعداد</th>
@@ -70,9 +86,20 @@
                 </thead>
                 <tbody>
                     {% for order in orders %}
-                    <tr class="clickable-row {% if order.status == 'producing' %}table-warning{% elif order.status == 'completed' %}table-success{% endif %}" data-href="{% url 'order_detail' order.id %}">
+                    {% with ps=order.packaging_summary %}
+                    <tr class="order-row 
+                        {% if ps.total > 0 and ps.shipped == ps.total %}table-success
+                        {% elif ps.total > 0 and ps.packed == ps.total %}table-info
+                        {% elif order.status == 'producing' %}table-warning
+                        {% elif order.status == 'completed' %}table-success
+                        {% endif %}" data-order-id="{{ order.id }}">
                         <td>
                             <input type="checkbox" name="order_ids" value="{{ order.id }}" form="batch-export-form" class="order-checkbox">
+                        </td>
+                        <td class="text-center">
+                            <button type="button" class="btn btn-sm btn-link p-0 expand-toggle" data-order-id="{{ order.id }}" title="نمایش آیتم‌ها">
+                                <i class="bi bi-chevron-down"></i>
+                            </button>
                         </td>
                         <td>
                             <a href="{% url 'order_detail' order.id %}" class="fw-bold text-primary text-decoration-none">{{ order.id }}</a>
@@ -80,13 +107,19 @@
                         <td>{{ order.user }}</td>
                         <td><span class="badge bg-info">{{ order.items.count }}</span></td>
                         <td>
-                            <span class="badge status-badge 
-                                {% if order.status == 'draft' %}bg-secondary
-                                {% elif order.status == 'planned' %}bg-info
-                                {% elif order.status == 'producing' %}bg-warning text-dark
-                                {% else %}bg-success{% endif %}">
-                                {{ order.get_status_display }}
-                            </span>
+                            {% if ps.total > 0 and ps.shipped == ps.total %}
+                                <span class="badge bg-success">🚚 ارسال شده</span>
+                            {% elif ps.total > 0 and ps.packed == ps.total %}
+                                <span class="badge bg-primary">📦 بسته‌بندی تکمیل شده</span>
+                            {% else %}
+                                <span class="badge status-badge
+                                    {% if order.status == 'draft' %}bg-secondary
+                                    {% elif order.status == 'planned' %}bg-info
+                                    {% elif order.status == 'producing' %}bg-warning text-dark
+                                    {% else %}bg-success{% endif %}">
+                                    {{ order.get_status_display }}
+                                </span>
+                            {% endif %}
                         </td>
                         <td>{{ order.created_at|date:"Y/m/d" }}</td>
                         <td>
@@ -99,22 +132,28 @@
                                 <a href="{% url 'order_combined_print' order.id %}" class="btn btn-outline-success" target="_blank" title="چاپ همه برگه‌ها">
                                     <i class="bi bi-printer"></i>
                                 </a>
-                                <!-- ✅ دکمه پیش‌فاکتور -->
                                 <a href="{% url 'order_invoice' order.id %}" class="btn btn-outline-info" target="_blank" title="پیش‌فاکتور">
                                     <i class="bi bi-receipt"></i>
                                 </a>
-                                <!-- در حلقه orders در order_list.html -->
-
                                 <a href="{% url 'admin_edit_order' order.id %}" class="btn btn-outline-primary" title="ویرایش سفارش">
                                     <i class="bi bi-pencil"></i>
                                 </a>
-
                             </div>
                         </td>
                     </tr>
+                    <tr class="order-detail-row" id="detail-row-{{ order.id }}" style="display:none;">
+                        <td colspan="8" class="p-0">
+                            <div id="detail-content-{{ order.id }}">
+                                <div class="text-center text-muted py-3">
+                                    <div class="spinner-border spinner-border-sm"></div> در حال بارگذاری...
+                                </div>
+                            </div>
+                        </td>
+                    </tr>
+                    {% endwith %}
                     {% empty %}
                     <tr>
-                        <td colspan="7" class="text-center py-5">
+                        <td colspan="8" class="text-center py-5">
                             <i class="bi bi-inbox display-4 text-muted mb-3"></i>
                             <p class="text-muted">سفارشی یافت نشد</p>
                         </td>
@@ -158,69 +197,98 @@
 </div>
 
 <script>
+document.addEventListener('DOMContentLoaded', function() {
     // ========== مدیریت چک‌باکس‌ها ==========
-    document.addEventListener('DOMContentLoaded', function() {
-        const selectAllCheckbox = document.getElementById('select-all');
-        const orderCheckboxes = document.querySelectorAll('.order-checkbox');
-        const batchExportBtn = document.getElementById('batch-export-btn');
-        const selectedCountSpan = document.getElementById('selected-count');
+    const selectAllCheckbox = document.getElementById('select-all');
+    const orderCheckboxes = document.querySelectorAll('.order-checkbox');
+    const batchExportBtn = document.getElementById('batch-export-btn');
+    const selectedCountSpan = document.getElementById('selected-count');
 
-        function updateSelectedCount() {
-            const checkedBoxes = document.querySelectorAll('.order-checkbox:checked');
-            const count = checkedBoxes.length;
-            selectedCountSpan.textContent = count + ' سفارش انتخاب شده';
-            batchExportBtn.disabled = count === 0;
-        }
+    function updateSelectedCount() {
+        const checkedBoxes = document.querySelectorAll('.order-checkbox:checked');
+        const count = checkedBoxes.length;
+        selectedCountSpan.textContent = count + ' سفارش انتخاب شده';
+        batchExportBtn.disabled = count === 0;
+    }
 
-        if (selectAllCheckbox) {
-            selectAllCheckbox.addEventListener('change', function(e) {
-                orderCheckboxes.forEach(cb => cb.checked = e.target.checked);
-                updateSelectedCount();
-            });
-        }
-
-        orderCheckboxes.forEach(cb => {
-            cb.addEventListener('change', updateSelectedCount);
-            // جلوگیری از کلیک روی سطر هنگام کلیک روی چک‌باکس
-            cb.addEventListener('click', function(e) {
-                e.stopPropagation();
-            });
+    if (selectAllCheckbox) {
+        selectAllCheckbox.addEventListener('change', function(e) {
+            orderCheckboxes.forEach(cb => cb.checked = e.target.checked);
+            updateSelectedCount();
         });
+    }
 
-        updateSelectedCount();
-
-        // ========== کلیک روی سطر (رفتن به جزئیات) ==========
-        document.querySelectorAll('.clickable-row').forEach(row => {
-            row.addEventListener('click', function(e) {
-                if (e.target.closest('a, button, input[type="checkbox"]')) return;
-                window.location.href = this.dataset.href;
-            });
-        });
-
-        // ========== ایجاد دستور تولید با AJAX ==========
-        document.querySelectorAll('.generate-tasks').forEach(btn => {
-            btn.addEventListener('click', function(e) {
-                e.stopPropagation();
-                const orderId = this.dataset.order;
-                if (confirm('آیا مطمئنید که می‌خواهید دستور تولید صادر شود؟')) {
-                    fetch(`/orders/${orderId}/generate-tasks/`, {
-                        method: 'POST',
-                        headers: {
-                            'X-CSRFToken': '{{ csrf_token }}',
-                        },
-                    })
-                    .then(response => response.json())
-                    .then(data => {
-                        if (data.success) {
-                            location.reload();
-                        } else {
-                            alert('خطا: ' + (data.error || 'نامشخص'));
-                        }
-                    })
-                    .catch(err => alert('خطای شبکه'));
-                }
-            });
+    orderCheckboxes.forEach(cb => {
+        cb.addEventListener('change', updateSelectedCount);
+        cb.addEventListener('click', function(e) {
+            e.stopPropagation();
         });
     });
+
+    updateSelectedCount();
+
+    // ========== باز و بستن ردیف آیتم‌ها ==========
+    document.querySelectorAll('.expand-toggle').forEach(function(btn) {
+        btn.addEventListener('click', function(e) {
+            e.stopPropagation();
+            const orderId = this.dataset.orderId;
+            const row = document.getElementById('detail-row-' + orderId);
+            const icon = this.querySelector('i');
+            const isOpen = row.style.display !== 'none';
+
+            if (isOpen) {
+                row.style.display = 'none';
+                icon.className = 'bi bi-chevron-down';
+                return;
+            }
+            row.style.display = '';
+            icon.className = 'bi bi-chevron-up';
+
+            const content = document.getElementById('detail-content-' + orderId);
+            if (content.dataset.loaded === 'true') return;
+
+            fetch(`/orders/${orderId}/items-expand/`, {headers: {'X-Requested-With': 'XMLHttpRequest'}})
+                .then(r => r.json())
+                .then(data => {
+                    if (data.success) {
+                        content.innerHTML = data.html;
+                        content.dataset.loaded = 'true';
+                    }
+                });
+        });
+    });
+
+    document.querySelectorAll('.order-row').forEach(function(row) {
+        row.addEventListener('click', function(e) {
+            if (e.target.closest('a, button, input')) return;
+            row.querySelector('.expand-toggle').click();
+        });
+    });
+
+    // ========== ایجاد دستور تولید با AJAX ==========
+    document.querySelectorAll('.generate-tasks').forEach(btn => {
+        btn.addEventListener('click', function(e) {
+            e.stopPropagation();
+            const orderId = this.dataset.order;
+            if (confirm('آیا مطمئنید که می‌خواهید دستور تولید صادر شود؟')) {
+                fetch(`/orders/${orderId}/generate-tasks/`, {
+                    method: 'POST',
+                    headers: {
+                        'X-CSRFToken': '{{ csrf_token }}',
+                    },
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        location.reload();
+                    } else {
+                        alert('خطا: ' + (data.error || 'نامشخص'));
+                    }
+                })
+                .catch(err => alert('خطای شبکه'));
+            }
+        });
+    });
+});
 </script>
 {% endblock %}

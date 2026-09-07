@@ -1,0 +1,51 @@
+{% extends 'base.html' %}
+{% block content %}
+<div class="container-fluid py-4">
+    <div class="d-flex justify-content-between align-items-center mb-3">
+        <h3>📋 آماده بارگیری (بسته‌بندی‌شده، ارسال‌نشده)</h3>
+        <a href="{% url 'report_shipped' %}" class="btn btn-outline-secondary">گزارش ارسال‌شده‌ها</a>
+    </div>
+
+    <form method="get" class="row g-2 mb-3 align-items-end">
+        <div class="col-md-4">
+            <label class="form-label small">نماینده</label>
+            <select name="representative" class="form-select" onchange="this.form.submit()">
+                <option value="">همه</option>
+                {% for rep in representatives %}
+                <option value="{{ rep.id }}" {% if selected_representative == rep.id|stringformat:"s" %}selected{% endif %}>
+                    {{ rep.get_full_name|default:rep.username }}
+                </option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="col-md-3">
+            <a href="?representative={{ selected_representative }}&print=1" target="_blank" class="btn btn-success">
+                🖨️ چاپ لیست بارگیری
+            </a>
+        </div>
+    </form>
+
+    <table class="table table-bordered table-hover">
+        <thead class="table-light">
+            <tr>
+                <th>نماینده</th><th>سفارش</th><th>محصول</th><th>مشتری</th><th>رنگ</th><th>شماره واحد</th><th>تاریخ بسته‌بندی</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for unit in units %}
+            <tr>
+                <td>{{ unit.order_item.order.user.get_full_name|default:unit.order_item.order.user.username }}</td>
+                <td>{{ unit.order_item.order.number|default:unit.order_item.order.id }}/{{ unit.order_item.id }}</td>
+                <td>{{ unit.order_item.product.category.name }} {{ unit.order_item.product.name }}</td>
+                <td>{{ unit.order_item.order.customer.name }}</td>
+                <td>{{ unit.order_item.color_summary }}</td>
+                <td>{{ unit.unit_number }}</td>
+                <td>{{ unit.packed_at|date:"Y/m/d H:i" }}</td>
+            </tr>
+            {% empty %}
+            <tr><td colspan="7" class="text-center text-muted py-4">موردی برای بارگیری وجود ندارد.</td></tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endblock %}

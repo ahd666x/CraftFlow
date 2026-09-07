@@ -607,14 +607,99 @@ def archive_upload(request):
     return render(request, 'archive_upload.html', context)
 
 
+def _archive_upload_page(request, archive_type):
+    if archive_type == 'cnc':
+        source_dir = getattr(settings, 'CNC_SOURCE_DIR', '')
+        expected_ext = getattr(settings, 'CNC_FILE_EXTENSION', '.cnc')
+    else:
+        source_dir = getattr(settings, 'DR_SOURCE_DIR', '')
+        expected_ext = getattr(settings, 'DR_FILE_EXTENSION', '.scx')
+
+    source_dir = str(source_dir)
+    os.makedirs(source_dir, exist_ok=True)
+
+    if request.method == 'POST':
+        uploaded_file = request.FILES.get('archive_file')
+        if not uploaded_file:
+            messages.error(request, 'فایلی انتخاب نشده است.')
+            return redirect(f"{reverse('archive_upload')}?type={archive_type}")
+
+        ext = os.path.splitext(uploaded_file.name)[1].lower()
+        if ext != expected_ext.lower():
+            messages.error(request, f'فایل باید با پسوند {expected_ext} باشد.')
+            return redirect(f"{reverse('archive_upload')}?type={archive_type}")
+
+        filename = os.path.basename(uploaded_file.name)
+        filename = re.sub(r'[\\/*?:"<>|]', '', filename)
+        file_path = os.path.join(source_dir, filename)
+
+        with open(file_path, 'wb+') as destination:
+            for chunk in uploaded_file.chunks():
+                destination.write(chunk)
+
+        messages.success(request, f'فایل {filename} با موفقیت آپلود شد.')
+        return redirect(f"{reverse('archive_upload')}?type={archive_type}")
+
+    search_query = request.GET.get('q', '').strip().lower()
+    files = []
+    try:
+        for fname in os.listdir(source_dir):
+            if search_query and search_query not in fname.lower():
+                continue
+            fpath = os.path.join(source_dir, fname)
+            if os.path.isfile(fpath):
+                stat = os.stat(fpath)
+                files.append({
+                    'name': fname,
+                    'size': stat.st_size,
+                    'modified': stat.st_mtime,
+                })
+    except OSError:
+        pass
+
+    files.sort(key=lambda x: x['name'])
+
+    context = {
+        'archive_type': archive_type,
+        'files': files,
+        'search_query': search_query,
+        'expected_ext': expected_ext,
+    }
+    return render(request, f'archive_upload_{archive_type}.html', context)
+
+
+@login_required
+@admin_or_manager_required
+def archive_upload_cnc(request):
+    return _archive_upload_page(request, 'cnc')
+
+
+@login_required
+@admin_or_manager_required
+def archive_upload_dr(request):
+    return _archive_upload_page(request, 'dr')
+
+
 @login_required
 @admin_or_manager_required
 def archive_delete_file(request):
     if request.method != 'POST':
         return JsonResponse({'success': False, 'error': 'روش غیرمجاز'}, status=405)
 
-    filename = request.POST.get('filename', '').strip()
-    archive_type = request.POST.get('archive_type', 'cnc').lower()
+    filename = ''
+    archive_type = 'cnc'
+    if request.content_type == 'application/json':
+        try:
+            import json
+            data = json.loads(request.body.decode('utf-8'))
+            filename = (data.get('filename') or '').strip()
+            archive_type = (data.get('archive_type') or 'cnc').lower()
+        except Exception:
+            pass
+    else:
+        filename = request.POST.get('filename', '').strip()
+        archive_type = request.POST.get('archive_type', 'cnc').lower()
+
     if not filename:
         return JsonResponse({'success': False, 'error': 'نام فایل مشخص نشده است.'}, status=400)
 
@@ -907,7 +992,7 @@ def dashboard(request):
 @login_required
 @staff_or_representative_required
 def order_list(request):
-    orders = Order.objects.select_related('customer', 'user').all().order_by('-id')
+    orders = Order.objects.select_related('customer', 'user').prefetch_related('items__packaging_units').all().order_by('-id')
 
     status = request.GET.get('status')
     if status:
@@ -935,6 +1020,28 @@ def order_list(request):
     if customer_filter:
         orders = orders.filter(customer__name__icontains=customer_filter)
 
+    orders = orders.annotate(
+        total_pack=Count('items__packaging_units', distinct=True),
+        packed_count=Count('items__packaging_units', filter=Q(items__packaging_units__is_packed=True), distinct=True),
+        shipped_count=Count('items__packaging_units', filter=Q(items__packaging_units__is_shipped=True), distinct=True),
+    )
+
+    packaging_status = request.GET.get('packaging_status')
+    if packaging_status == 'done':
+        orders = orders.filter(total_pack__gt=0, packed_count=F('total_pack'))
+    elif packaging_status == 'pending':
+        orders = orders.filter(total_pack__gt=0, packed_count__lt=F('total_pack'))
+    elif packaging_status == 'none':
+        orders = orders.filter(total_pack=0)
+
+    shipping_status = request.GET.get('shipping_status')
+    if shipping_status == 'done':
+        orders = orders.filter(total_pack__gt=0, shipped_count=F('total_pack'))
+    elif shipping_status == 'pending':
+        orders = orders.filter(total_pack__gt=0, shipped_count__lt=F('total_pack'))
+    elif shipping_status == 'none':
+        orders = orders.filter(total_pack=0)
+
     paginator = Paginator(orders, 200)
     page_obj = paginator.get_page(request.GET.get('page'))
 
@@ -944,6 +1051,8 @@ def order_list(request):
         'search_query': q,
         'id_filter': id_filter,
         'customer_filter': customer_filter,
+        'packaging_filter': packaging_status or '',
+        'shipping_filter': shipping_status or '',
     }
     return render(request, 'order_list.html', context)
 
