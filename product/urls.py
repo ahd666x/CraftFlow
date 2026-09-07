@@ -47,10 +47,6 @@ urlpatterns = [
     path('orders/', views.order_list, name='order_list'),
     path('orders/<int:order_id>/items-expand/', views.order_items_expand_ajax, name='order_items_expand_ajax'),
     path('orderlist/', views.order_item_list, name='order_item_list'),
-    path('orders/create/', views.create_order, name='create_order'),
-    path('orders/<int:order_id>/item/', views.add_item, name='add_item'),
-    path('orders/item/<int:item_id>/colors/', views.add_colors, name='add_colors'),
-    path('orders/create-complete/', views.create_complete_order, name='create_complete_order'),
 
     # چاپ
     path('orders/<int:order_id>/print/', views.order_print, name='order_print'),
@@ -82,7 +78,7 @@ urlpatterns = [
     # path('scan/part/<str:barcode>/', views.scan_part_direct, name='scan_part_direct'),
 
 
-    path('orders/create/step1/', views.create_order_step1, name='create_order_step1'),
+    path('orders/create/', views.create_order, name='create_order'),
     path('orders/create/step2/<int:order_id>/', views.create_order_step2, name='create_order_step2'),
     path('ajax/load-products/', views.ajax_load_products, name='ajax_load_products'),
     path('ajax/load-customers/', views.ajax_load_customers, name='ajax_load_customers'),
@@ -96,7 +92,6 @@ urlpatterns = [
     path('cnc/download/<str:barcode>/', views.download_cnc_file, name='download_cnc_file'),
     path('scan/part/dr/', views.scan_part_dr, name='scan_part_dr'),
     path('dr/download/<str:barcode>/', views.download_dr_file, name='download_dr_file'),
-    path('tasks/<int:task_id>/undo-scan/', views.undo_scan, name='undo_scan'),
     path('tasks/<int:task_id>/mark-done/', views.mark_task_done, name='mark_task_done'),
     path('scan/item-tasks/<int:item_id>/', views.scan_item_tasks_ajax, name='scan_item_tasks_ajax'),
 
@@ -127,8 +122,7 @@ urlpatterns = [
 
     # بخش مشتریان
     path('customer/orders/', views.customer_order_list, name='customer_order_list'),
-    path('customer/orders/new/step1/', views.customer_create_order_step1, name='customer_create_order_step1'),
-    path('customer/orders/new/step2/<int:order_id>/', views.customer_create_order_step2, name='customer_create_order_step2'),
+    path('customer/orders/new/', views.customer_create_order, name='customer_create_order'),
 
     path('customer/orders/detail/<int:order_id>/', views.customer_order_detail, name='customer_order_detail'),
     path('customer/orders/item/<int:item_id>/edit/', views.customer_edit_order_item, name='customer_edit_order_item'), 

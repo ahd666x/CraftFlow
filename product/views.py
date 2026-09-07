@@ -495,31 +495,6 @@ def scan_item_tasks_ajax(request, item_id):
 
 @login_required
 @require_POST
-def undo_scan(request, task_id):
-    task = get_object_or_404(ProductionTask, pk=task_id)
-    if task.completed_quantity <= 0:
-        return JsonResponse({'success': False, 'error': 'این تسک هنوز شروع نشده است.'}, status=400)
-
-    with transaction.atomic():
-        task.completed_quantity -= 1
-        if task.completed_quantity < 0:
-            task.completed_quantity = 0
-        if task.completed_quantity == 0:
-            task.status = 'pending'
-            task.scanned_by = None
-            task.completed_at = None
-        task.save()
-
-    return JsonResponse({
-        'success': True,
-        'completed_quantity': task.completed_quantity,
-        'quantity': task.quantity,
-        'status': task.status,
-    })
-
-
-@login_required
-@require_POST
 def mark_task_done(request, task_id):
     task = get_object_or_404(ProductionTask, pk=task_id)
 
@@ -1610,102 +1585,8 @@ def upload_form(request):
     return render(request, 'upload.html')
 
 
-@login_required
-@admin_or_manager_required
-def create_order(request):
-    if request.method == 'POST':
-        form = OrderForm(request.POST)
-        if form.is_valid():
-            order = form.save(commit=False)
-            order.user = request.user
-            order.save()
-            messages.success(request, f'سفارش #{order.id} ایجاد شد.')
-            return redirect('add_item', order_id=order.id)
-    else:
-        form = OrderForm()
-    return render(request, 'create_order.html', {'form': form})
-
-
-@login_required
-@admin_or_manager_required
-def add_item(request, order_id):
-    order = get_object_or_404(Order, id=order_id)
-    if request.method == 'POST':
-        form = OrderItemForm(request.POST)
-        if form.is_valid():
-            item = form.save(commit=False)
-            item.order = order
-            item.save()
-            messages.success(request, 'آیتم اضافه شد.')
-            return redirect('add_colors', item_id=item.id)
-    else:
-        form = OrderItemForm()
-    return render(request, 'orders/add_item.html', {'form': form, 'order': order})
-
-
-@login_required
-@admin_or_manager_required
-def add_colors(request, item_id):
-    item = get_object_or_404(OrderItem, id=item_id)
-    if request.method == 'POST':
-        parts = ['بدنه', 'درب', 'پایه', 'دستگیره', 'صفحه']
-        for part in parts:
-            form = ColorForm(request.POST, prefix=part)
-            if form.is_valid():
-                color = form.save(commit=False)
-                color.orderitem = item
-                color.part = part
-                color.save()
-        messages.success(request, 'رنگ‌ها ثبت شد.')
-        return redirect('order_list')
-    else:
-        color_forms = [ColorForm(prefix=p) for p in ['بدنه', 'درب', 'پایه', 'دستگیره', 'صفحه']]
-    return render(request, 'orders/add_colors.html', {'item': item, 'color_forms': color_forms})
-
-@login_required
-@admin_or_manager_required
-def create_complete_order(request):
-    if request.method == 'POST':
-        form = CompleteOrderForm(request.POST)
-        if form.is_valid():
-            with transaction.atomic():
-                customer, _ = Customer.objects.get_or_create(name=form.cleaned_data['customer_name'])
-                category, _ = ProductCategory.objects.get_or_create(name=form.cleaned_data['category_name'])
-                product = Product.objects.create(
-                    category=category,
-                    name=form.cleaned_data['product_name'],
-                    size=form.cleaned_data['size']
-                )
-                order = Order.objects.create(user=request.user, customer=customer)
-                order_item = OrderItem.objects.create(
-                    order=order,
-                    product=product,
-                    quantity=form.cleaned_data['quantity'],
-                    notes=form.cleaned_data['notes'],
-                    size=form.cleaned_data['size']
-                )
-                colors_data = [
-                    ('بدنه', form.cleaned_data['rang_bazne']),
-                    ('درب', form.cleaned_data['rang_darb']),
-                    ('پایه', form.cleaned_data['rang_paye']),
-                    ('دستگیره', form.cleaned_data['rang_dastgire']),
-                ]
-                for part, code in colors_data:
-                    if code:
-                        Color.objects.create(part=part, code=code, orderitem=order_item)
-            messages.success(request, f'سفارش #{order.id} کامل ایجاد شد.')
-            return redirect('order_list')
-    else:
-        form = CompleteOrderForm()
-    return render(request, 'create_complete.html', {'form': form})
-
-
-
-
-
-
-
-
+# -------------------------------------------------------------------
+#      اسکن قطعات
 # -------------------------------------------------------------------
 #      اسکن قطعات
 # -------------------------------------------------------------------
@@ -2218,37 +2099,71 @@ def delayed_orders(request):
 
 @login_required
 @admin_or_manager_required
-def create_order_step1(request):
-    form = OrderCustomerForm(user=request.user)
+def create_order(request):
     if request.method == 'POST':
         form = OrderCustomerForm(request.POST, user=request.user)
-        if form.is_valid():
-            # تعیین نماینده (کاربر مسئول سفارش)
-            if form.is_admin and form.cleaned_data.get('representative'):
-                representative = form.cleaned_data['representative']
-            else:
-                representative = request.user
+        item_form = OrderItemForm(request.POST)
+        color_form = ColorSelectionForm(request.POST)
+        if form.is_valid() and item_form.is_valid() and color_form.is_valid():
+            with transaction.atomic():
+                if form.is_admin and form.cleaned_data.get('representative'):
+                    representative = form.cleaned_data['representative']
+                else:
+                    representative = request.user
 
-            customer = form.cleaned_data['customer']
-            if not customer:
-                # ایجاد مشتری جدید
-                customer = Customer.objects.create(
-                    user=representative,  # نماینده مسئول این مشتری
-                    name=form.cleaned_data['new_customer_name'],
-                    phone=form.cleaned_data['new_customer_phone'],
-                    address=form.cleaned_data['new_customer_address']
+                customer = form.cleaned_data['customer']
+                if not customer:
+                    customer = Customer.objects.create(
+                        user=representative,
+                        name=form.cleaned_data['new_customer_name'],
+                        phone=form.cleaned_data.get('new_customer_phone', ''),
+                        address=form.cleaned_data.get('new_customer_address', '')
+                    )
+
+                order = Order.objects.create(
+                    user=representative,
+                    customer=customer,
+                    number=form.cleaned_data.get('number', ''),
+                    status='draft'
                 )
-            # ایجاد سفارش
-            order = Order.objects.create(
-                user=representative,
-                customer=customer,
-                # number = customer.phone,
-                number=form.cleaned_data.get('number', ''),   # ← مقدار امن
-                status='draft'
-            )
+
+                product = item_form.cleaned_data['product']
+                order_item = item_form.save(commit=False)
+                order_item.order = order
+                order_item.product = product
+                order_item.unit_price = product.base_price
+                order_item.save()
+
+                for part_value, _ in Color.PART_CHOICES:
+                    code = color_form.cleaned_data.get(f'color_{part_value}')
+                    if code:
+                        Color.objects.create(
+                            part=part_value,
+                            code=code,
+                            orderitem=order_item
+                        )
+
             messages.success(request, f"سفارش شماره {order.id} برای مشتری {customer.name} (نماینده: {representative.username}) ایجاد شد.")
-            return redirect('create_order_step2', order_id=order.id)
-    return render(request, 'orders/create_step1.html', {'form': form, 'is_admin': form.is_admin})
+            return redirect('order_detail', order_id=order.id)
+        else:
+            for field, errors in item_form.errors.items():
+                for error in errors:
+                    messages.error(request, f"خطا در {field}: {error}")
+            for field, errors in color_form.errors.items():
+                for error in errors:
+                    messages.error(request, f"خطا در رنگ‌ها: {error}")
+    else:
+        form = OrderCustomerForm(user=request.user)
+        item_form = OrderItemForm()
+        color_form = ColorSelectionForm()
+
+    context = {
+        'form': form,
+        'item_form': item_form,
+        'color_form': color_form,
+        'is_admin': form.is_admin,
+    }
+    return render(request, 'orders/create_order.html', context)
 
 
 @login_required
@@ -2961,72 +2876,34 @@ def customer_order_list(request):
 # -------------------------------------------------------------------
 
 @login_required
-def customer_create_order_step1(request):
-    # مشتری فعلی کاربر (اگر وجود داشته باشد)
+def customer_create_order(request):
     existing_customer = Customer.objects.filter(user=request.user).first()
 
     if request.method == 'POST':
         form = CustomerInfoForm(request.POST)
-        if form.is_valid():
-            name = form.cleaned_data['name']
-            phone = form.cleaned_data.get('phone', '')
-            address = form.cleaned_data.get('address', '')
-            number = form.cleaned_data.get('number', '')
-
-            # if existing_customer:
-            #     # به‌روزرسانی فقط همان رکورد
-            #     existing_customer.name = name
-            #     existing_customer.phone = phone
-            #     existing_customer.address = address
-            #     existing_customer.save()
-            #     customer = existing_customer
-            # else:
-            #     # ایجاد مشتری جدید
-            customer = Customer.objects.create(
-                user=request.user,
-                name=name,
-                phone=phone,
-                address=address
-            )
-
-            order = Order.objects.create(
-                user=request.user,
-                customer=customer,
-                number=number,
-                status='draft'
-            )
-            messages.success(request, 'سفارش جدید ایجاد شد. حالا محصولات را اضافه کنید.')
-            return redirect('customer_create_order_step2', order_id=order.id)
-    else:
-        # مقداردهی اولیه فرم
-        initial = {}
-        if existing_customer:
-            initial = {
-                'name': existing_customer.name,
-                'phone': existing_customer.phone,
-                'address': existing_customer.address,
-            }
-        form = CustomerInfoForm(initial=initial)
-
-    return render(request, 'customer/step1.html', {'form': form})
-
-
-
-
-
-# -------------------------------------------------------------------
-# ۳. مرحلهٔ دوم – افزودن محصولات
-# -------------------------------------------------------------------
-@login_required
-def customer_create_order_step2(request, order_id):
-    order = get_object_or_404(Order, id=order_id, user=request.user)  # فقط سفارش خودش
-    existing_items = order.items.select_related('product__category').prefetch_related('ordercolor')
-
-    if request.method == 'POST':
         item_form = OrderItemForm(request.POST)
         color_form = ColorSelectionForm(request.POST)
-        if item_form.is_valid() and color_form.is_valid():
+        if form.is_valid() and item_form.is_valid() and color_form.is_valid():
             with transaction.atomic():
+                name = form.cleaned_data['name']
+                phone = form.cleaned_data.get('phone', '')
+                address = form.cleaned_data.get('address', '')
+                number = form.cleaned_data.get('number', '')
+
+                customer = Customer.objects.create(
+                    user=request.user,
+                    name=name,
+                    phone=phone,
+                    address=address
+                )
+
+                order = Order.objects.create(
+                    user=request.user,
+                    customer=customer,
+                    number=number,
+                    status='draft'
+                )
+
                 product = item_form.cleaned_data['product']
                 order_item = item_form.save(commit=False)
                 order_item.order = order
@@ -3038,27 +2915,36 @@ def customer_create_order_step2(request, order_id):
                     code = color_form.cleaned_data.get(f'color_{part_value}')
                     if code:
                         Color.objects.create(part=part_value, code=code, orderitem=order_item)
-                messages.success(request, f'{order_item.product.name} به سفارش اضافه شد.')
-                if 'add_another' in request.POST:
-                    return redirect('customer_create_order_step2', order_id=order.id)
-                else:
-                    return redirect('order_invoice', order_id=order.id)
+
+            messages.success(request, 'سفارش جدید ایجاد شد.')
+            return redirect('customer_order_detail', order_id=order.id)
         else:
             messages.error(request, 'لطفاً خطاهای فرم را بررسی کنید.')
     else:
+        initial = {}
+        if existing_customer:
+            initial = {
+                'name': existing_customer.name,
+                'phone': existing_customer.phone,
+                'address': existing_customer.address,
+            }
+        form = CustomerInfoForm(initial=initial)
         item_form = OrderItemForm()
         color_form = ColorSelectionForm()
 
     context = {
-        'order': order,
+        'form': form,
         'item_form': item_form,
         'color_form': color_form,
-        'existing_items': existing_items,
     }
-    return render(request, 'customer/step2.html', context)
+    return render(request, 'customer/create_order.html', context)
 
 
 
+
+# -------------------------------------------------------------------
+# ۳. مرحلهٔ دوم – افزودن محصولات
+# -------------------------------------------------------------------
 # -------------------------------------------------------------------
 #    پیش فاکتور  
 # -------------------------------------------------------------------

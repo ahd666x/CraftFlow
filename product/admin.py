@@ -6,7 +6,7 @@ from .models import (
     Color, ProductCategory, WorkerProfile, Customer, ProductBOM, Product,
     Order, ProductionTask, Part, OrderItem, ProductionLog , PackagingUnit ,
 )
-from .forms import OrderForm, OrderItemForm, ColorForm, CompleteOrderForm
+from .forms import OrderItemForm
 from .models import ShipmentLog
 from .models import PaintingProcess, PaintingStage
 from .models import PaintingAssignmentRule

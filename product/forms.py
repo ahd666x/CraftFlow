@@ -1,6 +1,6 @@
 # forms.py
 from django import forms
-from .models import Order, OrderItem, Color, ProductCategory, PaintingProcess, PaintingStage, WorkerProfile
+from .models import Order, OrderItem, Color, ProductCategory, PaintingProcess, PaintingStage, WorkerProfile, Customer
 from django.contrib.auth.models import User
 
 import ast
@@ -26,94 +26,6 @@ class OrderEditForm(forms.ModelForm):
             'priority': 'اولویت',
             'status': 'وضعیت',
         }
-
-
-class OrderForm(forms.ModelForm):
-    class Meta:
-        model = Order
-        fields = ['customer']
-        widgets = {
-            'customer': forms.Select(attrs={'class': 'form-select'}),
-        }
-
-
-class ColorForm(forms.ModelForm):
-    class Meta:
-        model = Color
-        fields = ['part', 'code']
-        widgets = {
-            'part': forms.Select(attrs={'class': 'form-select'}),
-            'code': forms.Select(attrs={'class': 'form-select'}),
-        }
-
-
-class CompleteOrderForm(forms.Form):
-    customer_name = forms.CharField(
-        max_length=100,
-        widget=forms.TextInput(attrs={'class': 'form-control'}),
-        label='نام مشتری'
-    )
-    category_name = forms.CharField(
-        max_length=100,
-        widget=forms.TextInput(attrs={'class': 'form-control'}),
-        label='دسته بندی'
-    )
-    product_name = forms.CharField(
-        max_length=200,
-        widget=forms.TextInput(attrs={'class': 'form-control'}),
-        label='نام محصول'
-    )
-    quantity = forms.IntegerField(
-        min_value=1,
-        widget=forms.NumberInput(attrs={'class': 'form-control'}),
-        label='تعداد'
-    )
-    size = forms.CharField(
-        max_length=100,
-        required=False,
-        widget=forms.TextInput(attrs={'class': 'form-control'}),
-        label='اندازه'
-    )
-
-    rang_bazne = forms.CharField(max_length=50, required=False, label='رنگ بدنه')
-    rang_darb = forms.CharField(max_length=50, required=False, label='رنگ درب')
-    rang_paye = forms.CharField(max_length=50, required=False, label='رنگ پایه')
-    rang_dastgire = forms.CharField(max_length=50, required=False, label='رنگ دستگیره')
-
-    notes = forms.CharField(
-        max_length=200,
-        required=False,
-        widget=forms.Textarea(attrs={'class': 'form-control', 'rows': 2}),
-        label='یادداشت'
-    )
-
-
-
-# forms.py
-from django import forms
-from .models import Order, OrderItem, Customer, ProductCategory, Product, Color
-
-class CustomerSelectionForm(forms.Form):
-    customer = forms.ModelChoiceField(
-        queryset=Customer.objects.all(),
-        label="انتخاب مشتری",
-        required=False,
-        widget=forms.Select(attrs={'class': 'form-select'})
-    )
-    new_customer = forms.CharField(
-        max_length=100,
-        label="یا مشتری جدید",
-        required=False,
-        widget=forms.TextInput(attrs={'class': 'form-control', 'placeholder': 'نام مشتری جدید'})
-    )
-
-    def clean(self):
-        cleaned = super().clean()
-        customer = cleaned.get('customer')
-        new_customer = cleaned.get('new_customer')
-        if not customer and not new_customer:
-            raise forms.ValidationError("لطفاً یک مشتری انتخاب کنید یا نام مشتری جدید را وارد نمایید.")
-        return cleaned
 
 
 class ColorSelectionForm(forms.Form):
