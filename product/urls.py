@@ -186,6 +186,8 @@ urlpatterns = [
     path('customer/shipments/', views.customer_shipments, name='customer_shipments'),
     path('customer/shipments/<str:plate>/<str:date>/', views.customer_shipment_detail, name='customer_shipment_detail'),
 
+    path('delivery/', views.delivery_list, name='delivery_list'),
+    path('delivery/confirm/<int:item_id>/', views.delivery_confirm, name='delivery_confirm'),
 
 ]
 

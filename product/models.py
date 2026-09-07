@@ -302,7 +302,22 @@ class OrderItem(models.Model):
     def is_fully_shipped(self):
         shipped, total = self.shipping_progress
         return total > 0 and shipped == total
-    
+
+    @property
+    def is_painting_complete(self):
+        """آیا تمام تسک‌های نقاشی این آیتم به done رسیده‌اند؟"""
+        if not hasattr(self, 'paint_tasks'):
+            return False
+        paint_tasks = self.paint_tasks.all()
+        if not paint_tasks.exists():
+            return True
+        return paint_tasks.filter(status='done').count() == paint_tasks.count()
+
+    @property
+    def is_ready_for_delivery(self):
+        """آیا این آیتم برای تحویل آماده است؟ (نقاشی کامل + بسته‌بندی کامل)"""
+        return self.is_painting_complete and self.is_fully_packed
+
     @property
     def line_total(self):
         return self.unit_price * self.quantity
@@ -806,6 +821,7 @@ class ShipmentLog(models.Model):
     plate_number = models.CharField(max_length=50, verbose_name="پلاک")
     shipped_at = models.DateTimeField(auto_now_add=True, verbose_name="زمان ارسال")
     shipped_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, verbose_name="ارسال‌کننده")
+    delivery_notes = models.TextField(blank=True, verbose_name="یادداشت‌های تحویل")
 
     class Meta:
         verbose_name = "بارگیری"

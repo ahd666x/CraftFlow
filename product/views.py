@@ -3531,6 +3531,121 @@ def report_ready_to_ship(request):
     return render(request, 'reports/ready_to_ship.html', context)
 
 
+@login_required
+@admin_or_manager_required
+def delivery_list(request):
+    """لیست اقلام آماده تحویل بر اساس تکمیل نقاشی + بسته‌بندی"""
+    items = OrderItem.objects.filter(
+        paint_tasks__isnull=False
+    ).distinct().select_related(
+        'order__customer',
+        'order__user',
+        'product__category'
+    ).prefetch_related(
+        'paint_tasks__painting_stage',
+        'packaging_units',
+        'ordercolor'
+    )
+
+    ready_items = []
+    for item in items:
+        if item.is_ready_for_delivery:
+            ready_items.append({
+                'item': item,
+                'order': item.order,
+                'product': item.product,
+                'paint_done': item.paint_tasks.filter(status='done').count(),
+                'paint_total': item.paint_tasks.count(),
+                'packed': item.packaging_units.filter(is_packed=True).count(),
+                'total_units': item.packaging_units.count(),
+                'customer': item.order.customer,
+                'representative': item.order.user,
+            })
+
+    representative_ids = {r['representative'].id for r in ready_items if r['representative']}
+    representatives = User.objects.filter(id__in=representative_ids).distinct().order_by('username')
+
+    selected_representative = request.GET.get('representative')
+    if selected_representative:
+        ready_items = [r for r in ready_items if r['representative'] and r['representative'].id == int(selected_representative)]
+
+    context = {
+        'ready_items': ready_items,
+        'representatives': representatives,
+        'selected_representative': selected_representative or '',
+    }
+    return render(request, 'delivery/delivery_list.html', context)
+
+
+@login_required
+@admin_or_manager_required
+def delivery_confirm(request, item_id):
+    """ثبت تحویل یک آیتم با تعیین مسیول و یادداشت"""
+    item = get_object_or_404(OrderItem, pk=item_id)
+
+    if not item.is_ready_for_delivery:
+        messages.error(request, 'این آیتم هنوز برای تحویل آماده نیست.')
+        return redirect('delivery_list')
+
+    if request.method == 'POST':
+        delivery_person_id = request.POST.get('delivery_person')
+        notes = request.POST.get('notes', '').strip()
+        plate = request.POST.get('plate', '').strip()
+
+        if not delivery_person_id:
+            messages.error(request, 'لطفاً مسیول تحویل را انتخاب کنید.')
+            users = User.objects.filter(is_staff=True).order_by('username')
+            context = {
+                'item': item,
+                'users': users,
+                'selected_representative': request.POST.get('representative', ''),
+            }
+            return render(request, 'delivery/delivery_confirm.html', context)
+
+        delivery_person = get_object_or_404(User, pk=delivery_person_id)
+
+        units = item.packaging_units.filter(is_packed=True, is_shipped=False)
+        with transaction.atomic():
+            for unit in units:
+                unit.is_shipped = True
+                unit.shipped_at = timezone.now()
+                unit.shipped_by = delivery_person
+                unit.save()
+
+                ShipmentLog.objects.create(
+                    packaging_unit=unit,
+                    plate_number=plate,
+                    shipped_by=delivery_person,
+                    delivery_notes=notes,
+                )
+
+            try:
+                from .utils import log_production_event
+                task = item.paint_tasks.filter(status='done').first()
+                log_production_event(
+                    task=task,
+                    event_type='done',
+                    user=delivery_person,
+                    new_status='shipped',
+                    quantity=item.quantity,
+                )
+            except Exception:
+                pass
+
+        messages.success(request, f'✅ تحویل {units.count()} واحد از آیتم {item.id} ثبت شد.')
+        selected_representative = request.POST.get('representative', '')
+        if selected_representative:
+            return redirect(f"{reverse('delivery_list')}?representative={selected_representative}")
+        return redirect('delivery_list')
+
+    users = User.objects.filter(is_staff=True).order_by('username')
+    context = {
+        'item': item,
+        'users': users,
+    }
+    return render(request, 'delivery/delivery_confirm.html', context)
+
+
 
 
 
