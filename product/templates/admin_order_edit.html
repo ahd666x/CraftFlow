@@ -211,26 +211,25 @@
     <!-- ============================================================ -->
     <div class="card shadow-sm border-danger mb-4">
         <div class="card-header bg-danger text-white">
-            <h5 class="mb-0"><i class="bi bi-exclamation-triangle me-2"></i>عملیات مدیریتی</h5>
+            <h5 class="mb-0"><i class="bi bi-exclamation-triangle me-2"></i></h5>
         </div>
         <div class="card-body">
             <div class="d-flex flex-wrap gap-3">
                 <!-- حذف همه تسک‌ها و برگشت به پیش‌نویس -->
                 {% if has_any_tasks %}
-                <form method="post" action="{% url 'delete_all_tasks' order.id %}" onsubmit="return confirm('آیا از حذف تمام تسک‌های این سفارش اطمینان دارید؟')">
+                <form method="post" action="{% url 'delete_all_tasks' order.id %}" onsubmit="return confirm('آیا از حذف این سفارش اطمینان دارید؟')">
                     {% csrf_token %}
                     <button type="submit" class="btn btn-outline-danger">
-                        <i class="bi bi-arrow-counterclockwise me-1"></i> بازنشانی تسک‌ها (برگشت به پیش‌نویس)
-                    </button>
+                        <i class="bi bi-arrow-counterclockwise me-1"></i>برگشت به پیش‌نویس</button>
                 </form>
                 {% endif %}
 
                 <!-- حذف تسک‌های نقاشی -->
                 {% if has_paint_tasks %}
-                <form method="post" action="{% url 'delete_all_paint_tasks_for_order' order.id %}" onsubmit="return confirm('آیا از حذف تسک‌های نقاشی این سفارش اطمینان دارید؟')">
+                <form method="post" action="{% url 'delete_all_paint_tasks_for_order' order.id %}" onsubmit="return confirm('آیا از حذف برنامه ریزی نقاشی این سفارش اطمینان دارید؟')">
                     {% csrf_token %}
                     <button type="submit" class="btn btn-outline-warning">
-                        <i class="bi bi-brush me-1"></i> حذف تسک‌های نقاشی
+                        <i class="bi bi-brush me-1"></i> حذف برنامه ریزی نقاشی
                     </button>
                 </form>
                 {% endif %}
