@@ -1,7 +1,7 @@
 from django.apps import AppConfig
 
 
-class InventoryConfig(AppConfig):
+class QualityConfig(AppConfig):
     default_auto_field = 'django.db.models.BigAutoField'
-    name = 'inventory'
-    verbose_name = "Inventory"
+    name = 'quality'
+    verbose_name = "Quality"

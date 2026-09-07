@@ -11,4 +11,5 @@ urlpatterns = [
     re_path(r'^media/(?P<path>.*)$', serve, {'document_root': settings.MEDIA_ROOT}),
     path('', include('product.urls')),
     path('inventory/', include('inventory.urls')),
+    path('v2/', include('v2_urls')),
 ]

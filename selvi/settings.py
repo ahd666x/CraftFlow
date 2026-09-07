@@ -47,11 +47,24 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
+    'django.contrib.humanize',
+    'rest_framework',
     'product',
     'inventory',
-    'rest_framework',
-    'django.contrib.humanize',
-
+    'core',
+    'accounts',
+    'customers',
+    'sales',
+    'products',
+    'bom',
+    'warehouse',
+    'production',
+    'planning',
+    'painting',
+    'quality',
+    'packaging',
+    'shipping',
+    'reporting',
 ]
 
 MIDDLEWARE = [

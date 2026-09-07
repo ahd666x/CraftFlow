@@ -1,7 +1,7 @@
 from django.apps import AppConfig
 
 
-class InventoryConfig(AppConfig):
+class PaintingConfig(AppConfig):
     default_auto_field = 'django.db.models.BigAutoField'
-    name = 'inventory'
-    verbose_name = "Inventory"
+    name = 'painting'
+    verbose_name = "Painting"

@@ -1,7 +1,7 @@
 from django.apps import AppConfig
 
 
-class InventoryConfig(AppConfig):
+class ShippingConfig(AppConfig):
     default_auto_field = 'django.db.models.BigAutoField'
-    name = 'inventory'
-    verbose_name = "Inventory"
+    name = 'shipping'
+    verbose_name = "Shipping"

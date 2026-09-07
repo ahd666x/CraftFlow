@@ -38,7 +38,7 @@ class StockMovementAdmin(admin.ModelAdmin):
     list_filter = ['movement_type', 'created_at', 'raw_material__category']
     search_fields = ['raw_material__name', 'note']
     date_hierarchy = 'created_at'
-    autocomplete_fields = ['raw_material', 'supplier', 'reference_task']
+    autocomplete_fields = ['raw_material', 'supplier']
 
 
 @admin.register(PurchaseOrder)
