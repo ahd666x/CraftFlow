@@ -1,3 +1,4 @@
+{% load humanize %}
 {% for movement in movements %}
 <tr>
     <td>{{ movement.created_at|date:"Y/m/d H:i" }}</td>

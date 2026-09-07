@@ -19,6 +19,7 @@ from .models import (
     ProductionTask,
     OrderItem,
     ProductionLog,
+    ProductionEvent,
     PaintingProcess,
     PaintingStage,
     WorkerProfile,
@@ -29,6 +30,61 @@ from .models import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def log_production_event(task, event_type, user=None, old_status='', new_status='',
+                         old_worker=None, new_worker=None, quantity=0):
+    """ثبت متمرکز رویداد تولید - همیشه از این تابع استفاده شود، نه ساخت مستقیم ProductionEvent"""
+    try:
+        ProductionEvent.objects.create(
+            task=task,
+            order=task.order,
+            order_item=task.order_item,
+            station_name=task.station_name,
+            event_type=event_type,
+            quantity=quantity,
+            old_status=old_status,
+            new_status=new_status,
+            old_worker=old_worker,
+            new_worker=new_worker,
+            user=user,
+        )
+    except Exception:
+        logger.exception("خطا در ثبت ProductionEvent (نادیده گرفته شد تا جریان اصلی مختل نشود)")
+
+
+def consume_material_for_task(task):
+    """
+    برای یک تسک تکمیل‌شده که part و material آن به یک RawMaterial متصل است،
+    یک StockMovement مصرفی ثبت می‌کند. Idempotent است: اگر قبلاً برای همین
+    تسک ثبت شده باشد، دوباره ثبت نمی‌کند.
+    """
+    if not task.part or not task.part.material:
+        return None
+    material = task.part.material
+    if not material.raw_material_id:
+        return None
+
+    try:
+        from inventory.models import StockMovement
+        if StockMovement.objects.filter(reference_task=task, movement_type='consumption').exists():
+            return None
+
+        qty = (task.quantity or 0) * float(material.consumption_per_unit or 1)
+        if qty <= 0:
+            return None
+
+        return StockMovement.objects.create(
+            raw_material=material.raw_material,
+            movement_type='consumption',
+            quantity=qty,
+            reference_task=task,
+            note=f'مصرف خودکار - تسک #{task.id} ({task.get_station_name_display()})',
+            created_by=task.scanned_by,
+        )
+    except Exception:
+        logger.exception("خطا در مصرف خودکار مواد اولیه برای تسک %s", task.pk)
+        return None
 
 # ===================================================================
 #   کش‌های سراسری
@@ -1568,13 +1624,26 @@ def assign_task_to_worker(task_id, worker_id, target_date=None, allow_overtime=F
                     to_update, ['assigned_worker_id', 'scheduled_start', 'scheduled_end']
                 )
 
-                source_tasks_count = 0
                 if old_worker_id and old_worker_id != worker_id:
                     source_tasks_count = reschedule_worker_tasks_on_date(
                         old_worker_id,
                         jdatetime.date.fromgregorian(date=ref_date),
                         allow_overtime=allow_overtime,
                     )
+                    try:
+                        old_worker_obj = User.objects.filter(pk=old_worker_id).first()
+                        worker_obj = User.objects.filter(pk=worker_id).first()
+                        log_production_event(
+                            task=task,
+                            event_type='reassigned',
+                            user=None,
+                            old_worker=old_worker_obj,
+                            new_worker=worker_obj,
+                        )
+                    except Exception:
+                        logger.exception("خطا در ثبت رویداد reassigned")
+                else:
+                    source_tasks_count = 0
 
                 dest_tasks_count = reschedule_worker_tasks_on_date(
                     worker_id,

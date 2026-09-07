@@ -104,18 +104,18 @@
                 <h6 class="fw-bold">آرشیو DR</h6>
             </a>
         </div>
-        {% comment %} <div class="col-6 col-md-3">
-            <a href="{% url 'export_all_data' %}" class="quick-link-card">
-                <div class="quick-link-icon"><i class="bi bi-download"></i></div>
-                <h6 class="fw-bold">خروجی Excel</h6>
+        <div class="col-6 col-md-3">
+            <a href="{% url 'inventory:dashboard' %}" class="quick-link-card">
+                <div class="quick-link-icon"><i class="bi bi-archive"></i></div>
+                <h6 class="fw-bold">انبار</h6>
             </a>
         </div>
         <div class="col-6 col-md-3">
-            <a href="{% url 'import_data' %}" class="quick-link-card">
-                <div class="quick-link-icon"><i class="bi bi-upload"></i></div>
-                <h6 class="fw-bold">ورود از Excel</h6>
+            <a href="{% url 'report_production_unified' %}" class="quick-link-card">
+                <div class="quick-link-icon"><i class="bi bi-graph-up"></i></div>
+                <h6 class="fw-bold">گزارش یکپارچه</h6>
             </a>
-        </div> {% endcomment %}
+        </div>
     </div>
 
 </div>

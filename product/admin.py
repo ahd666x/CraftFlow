@@ -5,6 +5,7 @@ from django.utils.html import format_html
 from .models import (
     Color, ProductCategory, WorkerProfile, Customer, ProductBOM, Product,
     Order, ProductionTask, Part, OrderItem, ProductionLog , PackagingUnit ,
+    ProductionEvent,
 )
 from .forms import OrderItemForm
 from .models import ShipmentLog
@@ -437,3 +438,11 @@ class PaintingAssignmentRuleAdmin(admin.ModelAdmin):
             'fields': ('worker', 'painting_stage', 'color_codes', 'process', 'priority', 'is_active')
         }),
     )
+
+
+@admin.register(ProductionEvent)
+class ProductionEventAdmin(admin.ModelAdmin):
+    list_display = ['task', 'event_type', 'station_name', 'order', 'user', 'created_at']
+    list_filter = ['event_type', 'station_name']
+    search_fields = ['order__id', 'task__id']
+    readonly_fields = ['created_at']

@@ -64,6 +64,7 @@ urlpatterns = [
     # گزارش‌ها
     path('reports/orders/', views.report_orders, name='report_orders'),
     path('reports/stages/', views.report_stages, name='report_stages'),
+    path('reports/production-unified/', views.report_production_unified, name='report_production_unified'),
     path('reports/workers/', views.report_workers, name='report_workers'),
     path('reports/delayed/', views.delayed_orders, name='report_delayed'),
 

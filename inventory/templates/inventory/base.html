@@ -140,6 +140,12 @@
             <a href="{% url 'inventory:dashboard' %}" class="nav-link {% if active_tab == 'dashboard' %}active{% endif %}">
                 <i class="bi bi-speedometer2"></i> داشبورد
             </a>
+            <a href="{% url 'order_list' %}" class="nav-link">
+                <i class="bi bi-cart-check"></i> سفارشات
+            </a>
+            <a href="{% url 'painting_dashboard' %}" class="nav-link">
+                <i class="bi bi-brush"></i> نقاشی
+            </a>
             <a href="{% url 'inventory:supplier_list' %}" class="nav-link {% if active_tab == 'suppliers' %}active{% endif %}">
                 <i class="bi bi-truck"></i> تامین‌کنندگان
             </a>

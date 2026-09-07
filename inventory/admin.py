@@ -1,4 +1,6 @@
 from django.contrib import admin
+from django.utils.html import format_html
+
 from .models import Supplier, RawMaterialCategory, RawMaterial, StockMovement, PurchaseOrder, PurchaseOrderItem
 
 
@@ -26,14 +28,13 @@ class RawMaterialAdmin(admin.ModelAdmin):
         badge_map = {'success': 'success', 'warning': 'warning', 'danger': 'danger'}
         label_map = {'success': 'موجود', 'warning': 'کمبود', 'danger': 'تمام شده'}
         status = obj.stock_status
-        return f'<span class="badge bg-{badge_map[status]}">{label_map[status]}</span>'
+        return format_html('<span class="badge bg-{}">{}</span>', badge_map[status], label_map[status])
     stock_status.short_description = 'وضعیت موجودی'
-    stock_status.allow_tags = True
 
 
 @admin.register(StockMovement)
 class StockMovementAdmin(admin.ModelAdmin):
-    list_display = ['raw_material', 'movement_type', 'quantity', 'unit_price', 'supplier', 'created_by', 'created_at']
+    list_display = ['raw_material', 'movement_type', 'quantity', 'unit_price', 'reference_task', 'supplier', 'created_by', 'created_at']
     list_filter = ['movement_type', 'created_at', 'raw_material__category']
     search_fields = ['raw_material__name', 'note']
     date_hierarchy = 'created_at'

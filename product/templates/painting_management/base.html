@@ -205,6 +205,12 @@
 
         <!-- منوی اصلی در وسط -->
         <nav class="nav-links">
+            <a href="{% url 'order_list' %}" class="nav-link">
+                <i class="bi bi-cart-check"></i> سفارشات
+            </a>
+            <a href="{% url 'inventory:dashboard' %}" class="nav-link">
+                <i class="bi bi-archive"></i> انبار
+            </a>
             <a href="{% url 'painting_ready_list' %}" class="nav-link {% if request.resolver_match.url_name == 'painting_ready_list' %}active{% endif %}">
                 <i class="bi bi-clipboard-check"></i> آماده نقاشی
             </a>
@@ -222,7 +228,7 @@
             </a>
 
             <a href="{% url 'painting_assignment_rules' %}" class="nav-link {% if request.resolver_match.url_name == 'painting_assignment_rules' %}active{% endif %}">
-                <i class="bi bi-puzzle"></i> تنظیمات 
+                <i class="bi bi-puzzle"></i> تنظیمات
             </a>
 
             <a class="nav-link {% if active_tab == 'holidays' %}active{% endif %}" href="{% url 'painting_holidays' %}">

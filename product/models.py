@@ -52,6 +52,21 @@ class Material(models.Model):
         verbose_name="ضخامت (میلی‌متر)",
         help_text="مثال: 16.0"
     )
+    raw_material = models.ForeignKey(
+        'inventory.RawMaterial',
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name='product_materials',
+        verbose_name="ماده اولیه انبار (برای مصرف خودکار)"
+    )
+    consumption_per_unit = models.DecimalField(
+        max_digits=10,
+        decimal_places=3,
+        default=1,
+        verbose_name="مقدار مصرف به ازای هر قطعه",
+        help_text="مقدار مصرف به ازای هر قطعه"
+    )
 
     def __str__(self):
         return f"{self.name} ({self.thickness}mm)"
@@ -592,6 +607,29 @@ class ProductionTask(models.Model):
         super().save(*args, **kwargs)
 
         if self.status == 'done' and old_status != 'done':
+            try:
+                from .utils import log_production_event
+                log_production_event(
+                    task=self,
+                    event_type='done',
+                    user=self.scanned_by,
+                    old_status=old_status or '',
+                    new_status='done',
+                    quantity=self.completed_quantity or self.quantity,
+                )
+            except Exception:
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.exception("خطا در ثبت ProductionEvent (نادیده گرفته شد تا جریان اصلی مختل نشود)")
+
+            try:
+                from .utils import consume_material_for_task
+                consume_material_for_task(self)
+            except Exception:
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.exception("خطا در مصرف خودکار مواد اولیه برای تسک %s", self.pk)
+
             if self.station_name == 'paint' and self.order_item_id:
                 next_step = ProductionTask.objects.filter(
                     order=self.order,
@@ -679,6 +717,51 @@ class ProductionLog(models.Model):
 
 
 
+
+
+class ProductionEvent(models.Model):
+    EVENT_TYPES = [
+        ('started', 'شروع'),
+        ('done', 'اتمام'),
+        ('reassigned', 'تغییر کارگر'),
+        ('status_changed', 'تغییر وضعیت دستی'),
+    ]
+    task = models.ForeignKey(
+        'ProductionTask', on_delete=models.CASCADE, related_name='events', verbose_name="تسک تولید"
+    )
+    order = models.ForeignKey('Order', on_delete=models.CASCADE, related_name='production_events', verbose_name="سفارش")
+    order_item = models.ForeignKey(
+        'OrderItem', null=True, blank=True, on_delete=models.SET_NULL,
+        related_name='production_events', verbose_name="آیتم سفارش"
+    )
+    station_name = models.CharField(max_length=50, choices=STATION_CHOICES, verbose_name="ایستگاه")
+    event_type = models.CharField(max_length=20, choices=EVENT_TYPES, verbose_name="نوع رویداد")
+    quantity = models.PositiveIntegerField(default=0, verbose_name="تعداد در این رویداد")
+    old_status = models.CharField(max_length=20, blank=True, verbose_name="وضعیت قبلی")
+    new_status = models.CharField(max_length=20, blank=True, verbose_name="وضعیت جدید")
+    old_worker = models.ForeignKey(
+        User, null=True, blank=True, on_delete=models.SET_NULL,
+        related_name='+', verbose_name="کارگر قبلی"
+    )
+    new_worker = models.ForeignKey(
+        User, null=True, blank=True, on_delete=models.SET_NULL,
+        related_name='+', verbose_name="کارگر جدید"
+    )
+    user = models.ForeignKey(User, null=True, blank=True, on_delete=models.SET_NULL, verbose_name="ثبت‌کننده")
+    created_at = models.DateTimeField(auto_now_add=True, verbose_name="زمان ثبت")
+
+    class Meta:
+        verbose_name = "رویداد تولید"
+        verbose_name_plural = "رویدادهای تولید"
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['order_item', 'station_name']),
+            models.Index(fields=['task', 'created_at']),
+            models.Index(fields=['event_type', 'created_at']),
+        ]
+
+    def __str__(self):
+        return f"{self.get_event_type_display()} - تسک {self.task_id} - {self.created_at}"
 
 
 class PackagingUnit(models.Model):

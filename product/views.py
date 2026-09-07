@@ -68,7 +68,7 @@ from .utils import (
     _get_process_cache,
     assign_task_to_worker,
     get_unique_color_codes_for_item,
-    # سایر توابعی که در views استفاده کرده‌اید
+    log_production_event,
 )
 logger = logging.getLogger(__name__)
 
@@ -787,10 +787,18 @@ def admin_tasks_management(request):
             if new_status in dict(ProductionTask.TASK_STATUS):
                 count = qs.count()
                 for task in qs:
+                    old_status = task.status
                     task.status = new_status
-                    old = ProductionTask.objects.filter(pk=task.pk).values_list('status', flat=True).first()
-                    if new_status == 'done' and old != 'done':
+                    if new_status == 'done' and old_status != 'done':
                         task.completed_at = jdatetime.date.today()
+                        task.completed_quantity = task.quantity
+                        log_production_event(
+                            task=task,
+                            event_type='status_changed',
+                            user=request.user,
+                            old_status=old_status,
+                            new_status=new_status,
+                        )
                     task.save(update_fields=['status', 'completed_at', 'completed_quantity'])
                 messages.success(request, f'وضعیت {count} وظیفه به «{dict(ProductionTask.TASK_STATUS)[new_status]}» تغییر یافت.')
         elif action == 'bulk_worker':
@@ -2081,6 +2089,113 @@ def report_stages(request):
 
 
 @login_required
+@staff_or_representative_required
+def report_production_unified(request):
+    """
+    گزارش یکپارچه تولید بر اساس ProductionEvent.
+    فیلترها مشابه report_stages: q, category, product, date_from, date_to
+    خروجی: برای هر order_item، آخرین رویداد هر ایستگاه + وضعیت فعلی تسک‌ها.
+    """
+    from .models import ProductionEvent, OrderItem
+
+    events = ProductionEvent.objects.filter(event_type='done').select_related(
+        'order_item__product__category', 'order_item__order__user', 'task'
+    )
+
+    q = request.GET.get('q')
+    if q:
+        events = events.filter(
+            Q(order__id__icontains=q) |
+            Q(order_item__product__name__icontains=q) |
+            Q(order_item__order__customer__name__icontains=q)
+        )
+
+    date_from = request.GET.get('date_from')
+    if date_from:
+        events = events.filter(created_at__date__gte=date_from)
+    date_to = request.GET.get('date_to')
+    if date_to:
+        events = events.filter(created_at__date__lte=date_to)
+
+    category_id = request.GET.get('category')
+    if category_id:
+        events = events.filter(order_item__product__category_id=category_id)
+
+    product_id = request.GET.get('product')
+    if product_id:
+        events = events.filter(order_item__product_id=product_id)
+
+    representative_id = request.GET.get('representative')
+    if representative_id:
+        events = events.filter(order__user_id=representative_id)
+
+    item_station_latest = {}
+    for ev in events.order_by('created_at'):
+        key = (ev.order_item_id, ev.station_name)
+        item_station_latest[key] = ev
+
+    item_ids = {k[0] for k in item_station_latest if k[0]}
+    items = OrderItem.objects.filter(id__in=item_ids).select_related(
+        'order__user', 'product__category'
+    ).prefetch_related('logs', 'packaging_units')
+
+    report_rows = []
+    for item in items:
+        stage_status = {}
+        for code, name in STATION_CHOICES:
+            ev = item_station_latest.get((item.id, code))
+            if ev and ev.created_at:
+                jdate = ev.created_at
+                if hasattr(jdate, 'strftime'):
+                    stage_status[code] = f"{jdate.month:02d}/{jdate.day:02d}"
+                else:
+                    stage_status[code] = str(jdate)
+            else:
+                log = item.logs.filter(stage=code).first()
+                if log and log.created_at:
+                    jdate = log.created_at
+                    stage_status[code] = f"{jdate.month:02d}/{jdate.day:02d}"
+                else:
+                    stage_status[code] = None
+
+        total_units = item.packaging_units.count()
+        packed_units = item.packaging_units.filter(is_packed=True).count()
+        shipped_units = item.packaging_units.filter(is_shipped=True).count()
+
+        report_rows.append({
+            'item': item,
+            'stage_status': stage_status,
+            'total_units': total_units,
+            'packed_units': packed_units,
+            'shipped_units': shipped_units,
+            'representative': item.order.user.get_full_name() or item.order.user.username,
+            'category_name': item.product.category.name if item.product.category else '',
+        })
+
+    representatives = User.objects.filter(order__isnull=False).distinct().order_by('username')
+    categories = ProductCategory.objects.all()
+    if category_id:
+        products = Product.objects.filter(category_id=category_id).order_by('name')
+    else:
+        products = Product.objects.none()
+
+    context = {
+        'report_rows': report_rows,
+        'station_choices': STATION_CHOICES,
+        'search_query': q,
+        'date_from': date_from,
+        'date_to': date_to,
+        'representatives': representatives,
+        'categories': categories,
+        'products': products,
+        'selected_representative': representative_id,
+        'selected_category': category_id,
+        'selected_product': product_id,
+    }
+    return render(request, 'reports/production_unified.html', context)
+
+
+@login_required
 @admin_or_manager_required
 @staff_or_representative_required
 def report_workers(request):
@@ -2423,7 +2538,8 @@ MODEL_ORDER = [
     'Color',
     'ProductionTask',
     'ProductionLog',
-    'PackagingUnit',      # جدید
+    'ProductionEvent',
+    'PackagingUnit',
 ]
 
 def get_model_by_name(name):

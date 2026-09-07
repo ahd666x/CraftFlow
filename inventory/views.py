@@ -4,7 +4,8 @@ from decimal import Decimal
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required, user_passes_test
 from django.core.paginator import Paginator
-from django.db.models import Q, Sum, Count, F, Case, When, Value, CharField
+from django.db.models import Q, Sum, Count, F, Case, When, Value, CharField, ProtectedError
+from django.db.models.functions import Coalesce
 from django.http import JsonResponse, HttpResponseForbidden
 from django.shortcuts import get_object_or_404, render, redirect
 from django.template.loader import render_to_string
@@ -40,10 +41,8 @@ def _inventory_context(active_tab='dashboard'):
 def inventory_dashboard(request):
     total_materials = RawMaterial.objects.filter(is_active=True).count()
     total_suppliers = Supplier.objects.filter(is_active=True).count()
-    low_stock = RawMaterial.objects.filter(is_active=True).filter(
-        movements__isnull=False
-    ).annotate(
-        stock=Sum('movements__quantity')
+    low_stock = RawMaterial.objects.filter(is_active=True).annotate(
+        stock=Coalesce(Sum('movements__quantity'), 0)
     ).filter(stock__lte=F('min_stock_alert')).count()
 
     recent_movements = StockMovement.objects.select_related(
@@ -122,9 +121,7 @@ def supplier_create(request):
         return HttpResponseForbidden()
     form = SupplierForm(request.POST)
     if form.is_valid():
-        supplier = form.save(commit=False)
-        supplier.created_by = request.user
-        supplier.save()
+        supplier = form.save()
         return JsonResponse({'success': True, 'id': supplier.id, 'name': supplier.name})
     return JsonResponse({'success': False, 'errors': form.errors})
 
@@ -150,8 +147,11 @@ def supplier_delete(request, supplier_id):
     if request.headers.get('X-Requested-With') != 'XMLHttpRequest':
         return HttpResponseForbidden()
     supplier = get_object_or_404(Supplier, pk=supplier_id)
-    supplier.delete()
-    return JsonResponse({'success': True})
+    try:
+        supplier.delete()
+        return JsonResponse({'success': True})
+    except ProtectedError:
+        return JsonResponse({'success': False, 'error': 'این تامین‌کننده دارای سفارش خرید است و نمی‌تواند حذف شود.'})
 
 
 # ============================================================
@@ -233,8 +233,11 @@ def category_delete(request, category_id):
     if request.headers.get('X-Requested-With') != 'XMLHttpRequest':
         return HttpResponseForbidden()
     category = get_object_or_404(RawMaterialCategory, pk=category_id)
-    category.delete()
-    return JsonResponse({'success': True})
+    try:
+        category.delete()
+        return JsonResponse({'success': True})
+    except ProtectedError:
+        return JsonResponse({'success': False, 'error': 'این دسته دارای مواد اولیه است و نمی‌تواند حذف شود.'})
 
 
 # ============================================================
@@ -331,8 +334,11 @@ def raw_material_delete(request, material_id):
     if request.headers.get('X-Requested-With') != 'XMLHttpRequest':
         return HttpResponseForbidden()
     material = get_object_or_404(RawMaterial, pk=material_id)
-    material.delete()
-    return JsonResponse({'success': True})
+    try:
+        material.delete()
+        return JsonResponse({'success': True})
+    except ProtectedError:
+        return JsonResponse({'success': False, 'error': 'این ماده اولیه دارای حرکات انبار یا سفارش خرید است و نمی‌تواند حذف شود.'})
 
 
 # ============================================================
@@ -381,6 +387,7 @@ def stock_movement_list(request):
         **_inventory_context('movements'),
         'movements': page_obj,
         'materials': materials,
+        'suppliers': Supplier.objects.filter(is_active=True).order_by('name'),
         'search': search,
         'material_filter': material_id,
         'type_filter': movement_type,
@@ -448,6 +455,7 @@ def purchase_order_list(request):
         'search': search,
         'status_filter': status,
         'form': PurchaseOrderForm(),
+        'can_receive': orders.filter(status__in=['draft', 'ordered']).exists(),
     }
     return render(request, 'inventory/purchase_orders.html', context)
 
@@ -594,7 +602,7 @@ def purchase_order_item_delete(request, item_id):
 @admin_or_manager_required
 def low_stock_report(request):
     materials = RawMaterial.objects.filter(is_active=True).annotate(
-        stock=Sum('movements__quantity')
+        stock=Coalesce(Sum('movements__quantity'), 0)
     ).filter(stock__lte=F('min_stock_alert')).order_by('stock')
 
     context = {
