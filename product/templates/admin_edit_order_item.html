@@ -91,9 +91,16 @@ $(document).ready(function() {
         var productId = $(this).val();
         if (productId) {
             fetch(`/ajax/load-product-colors/${productId}/`)
-                .then(response => response.json())
-                .then(data => {
+                .then(function(response) {
+                    if (!response.ok) throw new Error('HTTP ' + response.status);
+                    return response.json();
+                })
+                .then(function(data) {
                     updateColorFields(data.defaults);
+                })
+                .catch(function(err) {
+                    console.error('Error loading product colors:', err);
+                    resetColorFields();
                 });
         } else {
             resetColorFields();
