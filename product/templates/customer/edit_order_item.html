@@ -73,100 +73,16 @@
 {% endblock %}
 
 {% block extra_js %}
+<script src="{% static 'js/color_filter.js' %}"></script>
 <script>
-$(document).ready(function() {
-    function loadProducts(categoryId, selectedId) {
-        if (!categoryId) {
-            $('#id_product').html('<option value="">---------</option>');
-            resetColorFields();
-            return;
-        }
-        $.ajax({
-            url: '/ajax/load-products/',
-            data: {'category': categoryId},
-            success: function(data) {
-                var options = '<option value="">---------</option>';
-                $.each(data, function(i, product) {
-                    options += '<option value="' + product.id + '">' + product.name + '</option>';
-                });
-                $('#id_product').html(options);
-                if (selectedId) {
-                    $('#id_product').val(selectedId);
-                    $('#id_product').trigger('change');
-                } else {
-                    resetColorFields();
-                }
-            }
-        });
-    }
-
-    function updateColorFields(defaults) {
-        const allowedParts = Object.keys(defaults);
-        document.querySelectorAll('.color-field').forEach(function(el) {
-            const part = el.getAttribute('data-part');
-            if (allowedParts.includes(part)) {
-                el.style.display = '';
-                const select = el.querySelector('select');
-                if (select && defaults[part]) {
-                    select.value = defaults[part];
-                } else if (select) {
-                    select.value = '';
-                }
-            } else {
-                el.style.display = 'none';
-                const select = el.querySelector('select');
-                if (select) select.value = '';
-            }
-        });
-    }
-
-    function resetColorFields() {
-        document.querySelectorAll('.color-field').forEach(function(el) {
-            el.style.display = '';
-            const select = el.querySelector('select');
-            if (select) select.value = '';
-        });
-    }
-
-    $('#id_product').on('change', function() {
-        var productId = $(this).val();
-        if (productId) {
-            fetch(`/ajax/load-product-colors/${productId}/`)
-                .then(function(response) {
-                    if (!response.ok) throw new Error('HTTP ' + response.status);
-                    return response.json();
-                })
-                .then(function(data) {
-                    updateColorFields(data.defaults);
-                })
-                .catch(function(err) {
-                    console.error('Error loading product colors:', err);
-                    resetColorFields();
-                });
-        } else {
-            resetColorFields();
-        }
+$(function () {
+    initCategoryProductColorFilter({
+        categorySelector: '#id_category',
+        productSelector: '#id_product',
+        loadProductsUrl: "{% url 'ajax_load_products' %}",
+        loadColorsUrlBase: '/ajax/load-product-colors/',
+        overwriteOnInitialLoad: false
     });
-
-    $('#id_category').change(function() {
-        var categoryId = $(this).val();
-        if (categoryId) {
-            loadProducts(categoryId);
-        } else {
-            $('#id_product').html('<option value="">---------</option>');
-            resetColorFields();
-        }
-    });
-
-    var initialCategory = $('#id_category').val();
-    if (initialCategory) {
-        var initialProduct = $('#id_product').data('initial-product');
-        if (initialProduct) {
-            loadProducts(initialCategory, initialProduct);
-        } else {
-            $('#id_category').trigger('change');
-        }
-    }
 });
 </script>
 {% endblock %}
