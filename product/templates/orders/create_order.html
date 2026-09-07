@@ -38,17 +38,10 @@
                                 {{ form.number }}
                             </div>
                         </div>
-                    </form>
-                </div>
-            </div>
 
-            <div class="card shadow">
-                <div class="card-header bg-success text-white">
-                    <h5>افزودن آیتم اول به سفارش</h5>
-                </div>
-                <div class="card-body">
-                    <form method="post" id="item-form">
-                        {% csrf_token %}
+                        <hr class="my-4">
+
+                        <h5 class="mb-3">افزودن آیتم اول به سفارش</h5>
                         <div class="row mb-3">
                             <div class="col-md-6">
                                 <label class="form-label">{{ item_form.category.label }}</label>
@@ -88,7 +81,7 @@
                         <div class="mt-4 d-flex gap-2">
                             <button type="submit" class="btn btn-success">ثبت سفارش</button>
                             <a href="{% url 'dashboard' %}" class="btn btn-secondary">انصراف</a>
-                        </div>  
+                        </div>
                     </form>
                 </div>
             </div>
