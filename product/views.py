@@ -2148,6 +2148,9 @@ def create_order(request):
                 return redirect('create_order_step2', order_id=order.id)
             return redirect('order_detail', order_id=order.id)
         else:
+            for field, errors in form.errors.items():
+                for error in errors:
+                    messages.error(request, f"خطا در {field}: {error}")
             for field, errors in item_form.errors.items():
                 for error in errors:
                     messages.error(request, f"خطا در {field}: {error}")
@@ -2923,7 +2926,15 @@ def customer_create_order(request):
                 return redirect('customer_order_detail', order_id=order.id)
             return redirect('customer_order_detail', order_id=order.id)
         else:
-            messages.error(request, 'لطفاً خطاهای فرم را بررسی کنید.')
+            for field, errors in form.errors.items():
+                for error in errors:
+                    messages.error(request, f"خطا در {field}: {error}")
+            for field, errors in item_form.errors.items():
+                for error in errors:
+                    messages.error(request, f"خطا در {field}: {error}")
+            for field, errors in color_form.errors.items():
+                for error in errors:
+                    messages.error(request, f"خطا در رنگ‌ها: {error}")
     else:
         initial = {}
         if existing_customer:
