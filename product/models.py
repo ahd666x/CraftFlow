@@ -618,9 +618,10 @@ class ProductionTask(models.Model):
                     uf.append('completed_quantity')
                 kwargs['update_fields'] = tuple(uf)
 
+        bypass = getattr(self, '_bypass_completion_effects', False)
         super().save(*args, **kwargs)
 
-        if self.status == 'done' and old_status != 'done':
+        if not bypass and self.status == 'done' and old_status != 'done':
             try:
                 from .utils import log_production_event
                 log_production_event(

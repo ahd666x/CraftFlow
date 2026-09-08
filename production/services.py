@@ -1,6 +1,7 @@
 from decimal import Decimal
 from django.db import transaction
 from django.contrib.auth import get_user_model
+from django.core.exceptions import ValidationError
 from .models import ProductionOrder, ProductionOrderItem, ProductionOperation, OperationAssignment, OperationExecution, WIPUnit, WIPTransfer
 
 User = get_user_model()
@@ -53,24 +54,72 @@ class ProductionService:
             return operations
 
     @staticmethod
-    def complete_operation(operation, completed_quantity, user=None):
-        with transaction.atomic():
-            operation.completed_quantity = completed_quantity
-            operation.status = 'completed'
-            operation.save(update_fields=['completed_quantity', 'status'])
+    def complete_operation(operation, completed_quantity, user=None, force_complete=False):
+        """
+        تکمیل یک عملیات تولید با Policy امن‌تر.
 
-            execution = OperationExecution.objects.create(
-                operation=operation,
-                worker=operation.assignments.filter(status='started').first().worker if operation.assignments.filter(status='started').exists() else None,
-                started_at=operation.actual_start or operation.created_at,
-                is_completed=True,
-                quantity_produced=completed_quantity,
+        - partial completion فقط در صورت force_complete=True یا رسیدن به quantity policy مجاز است.
+        - فعال‌سازی مرحله بعدی فقط از طریق RoutingDependency انجام می‌شود.
+        - اگر RoutingDependency برای این operation وجود نداشته باشد، مرحله بعدی خودکار ready نمی‌شود.
+        """
+        with transaction.atomic():
+            if completed_quantity < 0:
+                raise ValidationError("تعداد تکمیل شده نمی‌تواند منفی باشد.")
+
+            operation.completed_quantity = completed_quantity
+            operation.save(update_fields=['completed_quantity'])
+
+            # Determine if operation can be marked completed
+            # Default: only complete when explicitly forced or when run_time_minutes is met
+            can_complete = force_complete or (
+                operation.run_time_minutes > 0 and completed_quantity >= operation.run_time_minutes
             )
 
-            if operation.sequence < operation.production_order_item.operations.count():
-                next_op = operation.production_order_item.operations.filter(sequence=operation.sequence + 1).first()
-                if next_op:
-                    next_op.status = 'ready'
-                    next_op.save(update_fields=['status'])
+            if can_complete:
+                operation.status = 'completed'
+                operation.save(update_fields=['status'])
 
-            return execution
+                execution = OperationExecution.objects.create(
+                    operation=operation,
+                    worker=operation.assignments.filter(status='started').first().worker if operation.assignments.filter(status='started').exists() else None,
+                    started_at=operation.actual_start or operation.created_at,
+                    is_completed=True,
+                    quantity_produced=completed_quantity,
+                )
+
+                # Activate successors ONLY via RoutingDependency
+                successors = ProductionService._get_direct_successors(operation)
+                for succ in successors:
+                    if succ.status == 'waiting':
+                        succ.status = 'ready'
+                        succ.save(update_fields=['status'])
+
+                return execution
+            else:
+                # Partial completion without force - just update quantity
+                return None
+
+    @staticmethod
+    def _get_direct_successors(operation):
+        """
+        دریافت operationهای بعدی از طریق RoutingDependency.
+        اگر هیچ dependency ثبت نشده باشد، لیست خالی برمی‌گرداند.
+        """
+        from planning.models import RoutingDependency
+        if not operation.production_order_item or not operation.production_order_item.routing:
+            return []
+
+        dependencies = RoutingDependency.objects.filter(
+            routing=operation.production_order_item.routing,
+            predecessor__operation_code=operation.operation_code,
+            is_active=True,
+        ).select_related('successor')
+
+        successor_codes = [dep.successor.operation_code for dep in dependencies]
+        if not successor_codes:
+            return []
+
+        return ProductionOperation.objects.filter(
+            production_order_item=operation.production_order_item,
+            operation_code__in=successor_codes,
+        )

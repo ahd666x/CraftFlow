@@ -70,6 +70,7 @@ from .utils import (
     get_unique_color_codes_for_item,
     log_production_event,
 )
+from .services import LegacyProductionService
 logger = logging.getLogger(__name__)
 
 
@@ -456,8 +457,11 @@ def admin_order_tasks(request, order_id):
         new_status = request.POST.get('status')
         if task_id and new_status in ['waiting', 'pending', 'done']:
             task = get_object_or_404(ProductionTask, pk=task_id, order=order)
-            task.status = new_status
-            task.save()  # save() به‌طور خودکار next_step را فعال می‌کند
+            if new_status == 'done':
+                LegacyProductionService.complete_task(task, actor=request.user)
+            else:
+                task.status = new_status
+                task.save()
             messages.success(request, f'وضعیت تسک {task.id} به {task.get_status_display()} تغییر یافت.')
         return redirect('admin_order_tasks', order_id=order.id)
     
@@ -509,10 +513,7 @@ def mark_task_done(request, task_id):
         task.completed_quantity += 1
         if task.completed_quantity > task.quantity:
             task.completed_quantity = task.quantity
-        if task.completed_quantity >= task.quantity:
-            task.status = 'done'
-            task.scanned_by = request.user
-        task.save()
+        LegacyProductionService.complete_task(task, actor=request.user)
 
     return JsonResponse({
         'success': True,
@@ -1261,9 +1262,7 @@ def scan_qr(request, pk):
         messages.error(request, "مرحله مجاز نیست")
         return redirect('item_detail', pk=pk)
 
-    task.status = 'done'
-    task.scanned_by = request.user
-    task.save()
+    LegacyProductionService.complete_task(task, actor=request.user)
 
     messages.success(request, "مرحله ثبت شد ✅")
     return redirect('item_detail', pk=pk)
@@ -1504,9 +1503,7 @@ def export_multiple_autocut(request):
     with transaction.atomic():
         updated_count = 0
         for task in cut_tasks:
-            task.status = 'done'
-            task.scanned_by = request.user
-            task.save()   # این متد مرحله بعد را فعال و وضعیت سفارش را به‌روز می‌کند
+            LegacyProductionService.complete_task(task, actor=request.user)
             updated_count += 1
 
     messages.success(
@@ -1626,9 +1623,7 @@ def scan_part(request):
         if task_id:
             task = get_object_or_404(pending_tasks, id=task_id)
             with transaction.atomic():
-                task.status = 'done'
-                task.scanned_by = request.user
-                task.save()
+                LegacyProductionService.complete_task(task, actor=request.user)
 
             if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
                 return JsonResponse({
@@ -1671,9 +1666,7 @@ def scan_part(request):
                 return redirect('scan_part')
 
             with transaction.atomic():
-                task.status = 'done'
-                task.scanned_by = request.user
-                task.save()
+                LegacyProductionService.complete_task(task, actor=request.user)
 
             if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
                 return JsonResponse({
@@ -1766,10 +1759,7 @@ def scan_part_cnc(request):
         task.completed_quantity += 1
         if task.completed_quantity > task.quantity:
             task.completed_quantity = task.quantity
-        if task.completed_quantity >= task.quantity:
-            task.status = 'done'
-        task.scanned_by = request.user
-        task.save()
+        LegacyProductionService.complete_task(task, actor=request.user)
 
     from .utils import get_item_task_progress_for_station
     response_data = {
@@ -1863,10 +1853,7 @@ def scan_part_dr(request):
         task.completed_quantity += 1
         if task.completed_quantity > task.quantity:
             task.completed_quantity = task.quantity
-        if task.completed_quantity >= task.quantity:
-            task.status = 'done'
-        task.scanned_by = request.user
-        task.save()
+        LegacyProductionService.complete_task(task, actor=request.user)
 
     from .utils import get_item_task_progress_for_station
     response_data = {

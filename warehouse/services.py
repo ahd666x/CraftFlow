@@ -1,5 +1,7 @@
 from django.db import transaction
 from django.contrib.auth import get_user_model
+from django.core.exceptions import ValidationError
+from django.utils import timezone
 from .models import MaterialRequirement, MaterialRequest, MaterialRequestItem, MaterialIssue, MaterialIssueItem, MaterialConsumption, MaterialReturn, MaterialReturnItem, MaterialWaste
 
 User = get_user_model()
@@ -34,13 +36,27 @@ class WarehouseService:
             return material_request
 
     @staticmethod
-    def issue_material(issued_by, items_data, customer_order=None, **kwargs):
+    def issue_material(issued_by, items_data, customer_order=None, idempotency_key=None, **kwargs):
+        """
+        صدور مواد با کلید idempotency.
+
+        اگر idempotency_key ارائه داده شود، بررسی می‌کند که قبلاً issue با این کلید ثبت نشده باشد.
+        در صورت وجود، exception raises می‌کند.
+        """
         with transaction.atomic():
+            if idempotency_key:
+                existing = MaterialIssue.objects.filter(
+                    notes__contains=f"idempotency_key:{idempotency_key}"
+                ).first()
+                if existing:
+                    raise ValidationError(f"صدور مواد با کلید idempotency '{idempotency_key}' قبلاً ثبت شده است.")
+
             issue_number = f"MI-{MaterialIssue.objects.count() + 1:06d}"
             material_issue = MaterialIssue.objects.create(
                 issue_number=issue_number,
                 issued_by=issued_by,
                 customer_order=customer_order,
+                notes=f"{kwargs.get('notes', '')} [idempotency_key:{idempotency_key}]".strip(),
                 **kwargs
             )
             for item_data in items_data:
@@ -51,15 +67,35 @@ class WarehouseService:
             return material_issue
 
     @staticmethod
-    def consume_material(material_issue_item, quantity, consumed_by, production_order=None, production_operation=None, **kwargs):
+    def consume_material(material_issue_item, quantity, consumed_by, production_order=None, production_operation=None, idempotency_key=None, **kwargs):
+        """
+        مصرف مواد با کلید idempotency.
+
+        اگر idempotency_key ارائه داده شود، بررسی می‌کند که قبلاً مصرف با این کلید ثبت نشده باشد.
+        """
         with transaction.atomic():
+            if quantity <= 0:
+                raise ValidationError("مقدار مصرف باید بزرگ‌تر از صفر باشد.")
+
+            if idempotency_key:
+                existing = MaterialConsumption.objects.filter(
+                    notes__contains=f"idempotency_key:{idempotency_key}"
+                ).first()
+                if existing:
+                    raise ValidationError(f"مصرف مواد با کلید idempotency '{idempotency_key}' قبلاً ثبت شده است.")
+
+            if quantity > material_issue_item.quantity:
+                raise ValidationError("مقدار مصرف نمی‌تواند بیشتر از مقدار صدور باشد.")
+
             consumption = MaterialConsumption.objects.create(
                 material_issue_item=material_issue_item,
                 item=material_issue_item.item,
                 quantity=quantity,
+                consumption_date=timezone.now(),
                 consumed_by=consumed_by,
                 production_order=production_order,
                 production_operation=production_operation,
-                **kwargs
+                notes=f"{kwargs.get('notes', '')} [idempotency_key:{idempotency_key}]".strip() if idempotency_key else kwargs.get('notes', ''),
+                **{k: v for k, v in kwargs.items() if k != 'notes'}
             )
             return consumption

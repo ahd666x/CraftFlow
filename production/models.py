@@ -179,7 +179,7 @@ class OperationAssignment(models.Model):
 
 class OperationExecution(models.Model):
     operation = models.ForeignKey(ProductionOperation, on_delete=models.CASCADE, related_name='executions', verbose_name="عملیات")
-    worker = models.ForeignKey('accounts.Worker', on_delete=models.CASCADE, verbose_name="کارگر")
+    worker = models.ForeignKey('accounts.Worker', on_delete=models.CASCADE, verbose_name="کارگر", null=True, blank=True)
     started_at = models.DateTimeField(verbose_name="زمان شروع")
     ended_at = models.DateTimeField(null=True, blank=True, verbose_name="زمان پایان")
     quantity_produced = models.PositiveIntegerField(default=0, verbose_name="تعداد تولید شده")
