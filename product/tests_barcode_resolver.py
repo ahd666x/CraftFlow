@@ -62,17 +62,18 @@ class BarcodeResolverTests(TestCase):
     def test_legacy_entity_with_migration_map(self):
         """legacy entity با MigrationMap باید v2_metadata داشته باشد"""
         run = MigrationRun.objects.create(
-            total_records=1,
-            successful=1,
-            failed=0,
+            phase='order_item',
+            name='test-run',
             status='completed'
         )
         MigrationMap.objects.create(
             migration_type='order_item',
             old_model='product.OrderItem',
             old_id=self.item.id,
+            old_app='product',
             new_model='sales.CustomerOrderItem',
             new_id=999,
+            new_app='sales',
             migration_run=run,
             is_legacy=True
         )
@@ -80,7 +81,7 @@ class BarcodeResolverTests(TestCase):
         self.assertTrue(result['legacy'])
         self.assertIsNotNone(result['v2_metadata'])
         self.assertEqual(result['v2_metadata']['v2_model'], 'sales.CustomerOrderItem')
-        self.assertEqual(result['v2_metadata']['v2_id'], 999)
+        self.assertEqual(result['v2_metadata']['v2_id'], '999')
 
     def test_invalid_id_returns_unknown(self):
         """شناسه نامعتبر باید unknown برگرداند"""

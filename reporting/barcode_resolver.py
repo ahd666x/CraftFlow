@@ -146,7 +146,7 @@ class BarcodeResolver:
         if not isinstance(payload, str):
             return None
         import re
-        match = re.search(r'/scan/packaging_unit/(\d+)/?', payload)
+        match = re.search(r'/scan/packaging/(\d+)/?', payload)
         if match:
             return int(match.group(1))
         return None
