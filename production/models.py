@@ -47,7 +47,11 @@ class ProductionOrderItem(models.Model):
     completed_quantity = models.PositiveIntegerField(default=0, verbose_name="تعداد تکمیل شده")
     scrapped_quantity = models.PositiveIntegerField(default=0, verbose_name="تعداد دورریز")
     bom = models.ForeignKey('bom.BOM', on_delete=models.PROTECT, verbose_name="BOM")
+    bom_revision = models.CharField(max_length=20, default="", verbose_name="Revision BOM")
+    bom_snapshot = models.JSONField(default=dict, blank=True, verbose_name="Snapshot BOM")
     routing = models.ForeignKey(Routing, on_delete=models.PROTECT, verbose_name="مسیر تولید")
+    routing_revision = models.CharField(max_length=20, default="", verbose_name="Revision Routing")
+    routing_snapshot = models.JSONField(default=dict, blank=True, verbose_name="Snapshot Routing")
     notes = models.TextField(blank=True, verbose_name="یادداشت‌ها")
     created_at = models.DateTimeField(auto_now_add=True, verbose_name="تاریخ ایجاد")
 
@@ -137,9 +141,18 @@ class ProductionOperation(models.Model):
     created_at = models.DateTimeField(auto_now_add=True, verbose_name="تاریخ ایجاد")
     updated_at = models.DateTimeField(auto_now=True, verbose_name="تاریخ به‌روزرسانی")
 
+    # V1 compatibility fields (MigrationMap target)
+    part = models.ForeignKey('products.ProductPart', on_delete=models.SET_NULL, null=True, blank=True, related_name='operations', verbose_name="قطعه")
+    scanned_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name='scanned_operations', verbose_name="اسکن شده توسط")
+    completed_at = models.DateField(null=True, blank=True, verbose_name="تکمیل شده در (جلالی)")
+    painting_stage = models.ForeignKey('painting.PaintingProcessStage', on_delete=models.SET_NULL, null=True, blank=True, related_name='operations', verbose_name="مرحله نقاشی")
+    assigned_worker = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name='assigned_operations', verbose_name="کارگر اختصاص یافته")
+    order_item = models.ForeignKey('sales.CustomerOrderItem', on_delete=models.SET_NULL, null=True, blank=True, related_name='operations', verbose_name="آیتم سفارش")
+    color_part = models.CharField(max_length=20, blank=True, verbose_name="بخش رنگی")
+
     class Meta:
-        verbose_name = "عملیات تولید"
-        verbose_name_plural = "عملیات‌های تولید"
+        verbose_name="عملیات تولید"
+        verbose_name_plural="عملیات‌های تولید"
         ordering = ['production_order', 'sequence']
         indexes = [
             models.Index(fields=['production_order', 'sequence']),

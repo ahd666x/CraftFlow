@@ -236,6 +236,7 @@ class Item(models.Model):
     weight_kg = models.DecimalField(max_digits=8, decimal_places=3, null=True, blank=True, verbose_name="وزن (کیلوگرم)")
     volume_m3 = models.DecimalField(max_digits=8, decimal_places=4, null=True, blank=True, verbose_name="حجم (متر مکعب)")
     image = models.ImageField(upload_to='items/', blank=True, null=True, verbose_name="تصویر")
+    consumption_per_unit = models.DecimalField(max_digits=10, decimal_places=4, default=1, verbose_name="مصرف هر واحد")
 
     class Meta:
         verbose_name = "کالا (Item)"

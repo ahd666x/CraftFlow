@@ -65,7 +65,21 @@ INSTALLED_APPS = [
     'packaging',
     'shipping',
     'reporting',
+    'v2_api',
 ]
+
+V2_FEATURES = {
+    'v2_ui': True,
+    'v2_api': True,
+    'v2_orders': True,
+    'v2_production': True,
+    'v2_inventory': True,
+    'v2_quality': True,
+    'v2_painting': True,
+    'v2_packaging': True,
+    'v2_shipping': True,
+    'v2_reporting': True,
+}
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
@@ -178,6 +192,13 @@ REST_FRAMEWORK = {
         'rest_framework.renderers.JSONRenderer',
     ],
     'DEFAULT_PAGINATION_CLASS': None,
+    'DEFAULT_AUTHENTICATION_CLASSES': [
+        'rest_framework.authentication.SessionAuthentication',
+        'rest_framework.authentication.BasicAuthentication',
+    ],
+    'DEFAULT_PERMISSION_CLASSES': [
+        'rest_framework.permissions.IsAuthenticated',
+    ],
 }
 
 

@@ -52,6 +52,11 @@ class BusinessEvent(models.Model):
 
     metadata = models.JSONField(default=dict, blank=True, verbose_name="اطلاعات اضافی")
     is_system = models.BooleanField(default=False, verbose_name="رویداد سیستمی")
+    correlation_id = models.CharField(max_length=100, blank=True, db_index=True, verbose_name="شناسه هم‌بسته")
+    legacy_reference = models.CharField(max_length=100, blank=True, db_index=True, verbose_name="ارجاع legacy")
+    legacy_app = models.CharField(max_length=50, blank=True, verbose_name="اپ legacy")
+    legacy_model = models.CharField(max_length=100, blank=True, verbose_name="مدل legacy")
+    legacy_id = models.CharField(max_length=50, blank=True, verbose_name="شناسه legacy")
 
     class Meta:
         verbose_name = "رویداد کسب‌وکار"
@@ -120,10 +125,12 @@ class Barcode(models.Model):
     object_id = models.PositiveIntegerField(null=True, blank=True, verbose_name="شناسه شی")
     content_object = GenericForeignKey('content_type', 'object_id')
     data = models.JSONField(default=dict, blank=True, verbose_name="داده‌های بارکد")
-    is_active = models.BooleanField(default=True, verbose_name="فعال")
+    is_active = models.BooleanField(default=True, verbose_name="عال")
     created_at = models.DateTimeField(auto_now_add=True, verbose_name="تاریخ ایجاد")
-    last_scanned_at = models.DateTimeField(null=True, blank=True, verbose_name="آخرین اسکن")
+    last_scanned_at = models.DateTimeField(null=True, blank=True, verbose_name=" آخرین اسکن")
     scan_count = models.PositiveIntegerField(default=0, verbose_name="تعداد اسکن")
+    legacy_entity_type = models.CharField(max_length=50, blank=True, verbose_name="نوع entity legacy")
+    legacy_entity_id = models.CharField(max_length=50, blank=True, verbose_name="شناسه entity legacy")
 
     class Meta:
         verbose_name = "بارکد"
@@ -140,16 +147,25 @@ class MigrationMap(models.Model):
         ('order', 'سفارش'),
         ('order_item', 'آیتم سفارش'),
         ('product', 'محصول'),
+        ('product_category', 'دسته‌بندی محصول'),
         ('part', 'قطعه'),
+        ('product_part', 'قطعه محصول'),
+        ('production_part', 'قطعه تولید'),
         ('bom', 'BOM'),
+        ('bom_item', 'آیتم BOM'),
+        ('bom_item_material_rule', 'قانون ماده BOM'),
         ('routing', 'مسیر تولید'),
         ('task', 'تسک تولید'),
         ('material', 'ماده اولیه'),
-        ('stock_movement', 'حرکت انبار'),
         ('raw_material', 'ماده خام'),
+        ('item', 'کالا (Item)'),
+        ('item_category', 'دسته کالا'),
+        ('uom', 'واحد اندازه‌گیری'),
+        ('stock_movement', 'حرکت انبار'),
         ('supplier', 'تامین‌کننده'),
         ('purchase_order', 'سفارش خرید'),
         ('worker', 'کارگر'),
+        ('worker_profile', 'پروفایل کارگر'),
         ('painting_process', 'روند نقاشی'),
         ('painting_stage', 'مرحله نقاشی'),
     ]

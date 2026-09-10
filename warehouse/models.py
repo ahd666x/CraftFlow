@@ -100,6 +100,7 @@ class MaterialIssue(models.Model):
     status = models.CharField(max_length=20, choices=ISSUE_STATUS, default='draft', verbose_name="وضعیت")
     notes = models.TextField(blank=True, verbose_name="یادداشت‌ها")
     customer_order = models.ForeignKey(CustomerOrder, null=True, blank=True, on_delete=models.SET_NULL, verbose_name="سفارش مرتبط")
+    idempotency_key = models.CharField(max_length=100, blank=True, unique=True, verbose_name="کلید idempotency")
 
     class Meta:
         verbose_name = "صدور مواد"
@@ -139,6 +140,7 @@ class MaterialConsumption(models.Model):
     production_operation = models.ForeignKey('production.ProductionOperation', null=True, blank=True, on_delete=models.SET_NULL, verbose_name="عملیات تولید")
     notes = models.TextField(blank=True, verbose_name="یادداشت")
     created_at = models.DateTimeField(auto_now_add=True, verbose_name="تاریخ ثبت")
+    idempotency_key = models.CharField(max_length=100, blank=True, unique=True, verbose_name="کلید idempotency")
 
     class Meta:
         verbose_name = "مصرف مواد"
