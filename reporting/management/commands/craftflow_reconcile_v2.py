@@ -5,9 +5,9 @@ and MigrationMap anchors to verify data integrity after migration.
 """
 import json
 from django.core.management.base import BaseCommand
-from django.db.models import Count
+from django.db import OperationalError
 
-from reporting.models import MigrationMap, MigrationRun, BusinessEvent, AuditLog
+from reporting.models import MigrationMap, BusinessEvent, AuditLog
 
 
 class Command(BaseCommand):
@@ -27,6 +27,25 @@ class Command(BaseCommand):
         else:
             self.print_report(report)
 
+    def _safe_query(self, queryset):
+        """Execute a queryset safely, returning (result, table_missing)."""
+        try:
+            result = list(queryset)
+            return result, False
+        except OperationalError:
+            return None, True
+
+    def _safe_count(self, model, filter_kwargs=None):
+        """Count model records safely, returning (count, table_missing)."""
+        try:
+            qs = model._default_manager
+            if filter_kwargs:
+                qs = qs.filter(**filter_kwargs)
+            count = qs.count()
+            return count, False
+        except OperationalError:
+            return 0, True
+
     def generate_report(self):
         """Generate reconciliation report comparing V1 and V2 entities."""
         from product.models import (
@@ -38,9 +57,9 @@ class Command(BaseCommand):
         )
         from customers.models import Customer as V2Customer
         from products.models import Product as V2Product
-        from bom.models import BOM as V2BOM, BOMItem as V2BOMItem
+        from bom.models import BOM as V2BOM
         from sales.models import CustomerOrder as V2Order, CustomerOrderItem as V2OrderItem
-        from production.models import ProductionOrder as V2ProdOrder, ProductionOrderItem as V2ProdOrderItem, ProductionOperation as V2ProdOperation
+        from production.models import ProductionOrder as V2ProdOrder
         from inventory.models import Item as V2Item, RawMaterial as V2RawMaterial
         from painting.models import PaintingSchedule as V2PaintingSchedule
         from shipping.models import Shipment as V2Shipment
@@ -61,12 +80,15 @@ class Command(BaseCommand):
 
         results = []
         for key, name, v1_model, v2_model in comparisons:
-            v1_count = v1_model.objects.count()
-            v2_count = v2_model.objects.count()
+            v1_count, v1_missing = self._safe_count(v1_model)
+            v2_count, v2_missing = self._safe_count(v2_model)
 
-            map_count = MigrationMap.objects.filter(
-                migration_type=key, is_legacy=True
-            ).count()
+            map_result, mm_missing = self._safe_query(
+                MigrationMap.objects.filter(
+                    migration_type=key, is_legacy=True
+                )
+            )
+            map_count = len(map_result) if map_result is not None else 0
 
             results.append({
                 'entity': name,
@@ -75,12 +97,20 @@ class Command(BaseCommand):
                 'v2_count': v2_count,
                 'migration_map_entries': map_count,
                 'reconciled': v1_count == v2_count,
+                'v1_table_missing': v1_missing,
+                'v2_table_missing': v2_missing,
+                'migration_map_table_missing': mm_missing,
             })
 
         # Check MigrationMap coverage
-        all_map_types = list(MigrationMap.objects.values_list(
-            'migration_type', flat=True
-        ).distinct())
+        types_result, mm_missing = self._safe_query(
+            MigrationMap.objects.values_list('migration_type', flat=True).distinct()
+        )
+        if types_result is not None:
+            all_map_types = sorted(types_result)
+        else:
+            all_map_types = []
+
         expected_types = [
             'customer', 'order', 'order_item', 'product',
             'product_category', 'bom', 'bom_item', 'routing',
@@ -90,20 +120,23 @@ class Command(BaseCommand):
         missing_types = [t for t in expected_types if t not in all_map_types]
 
         # BusinessEvent category coverage
-        v1_event_count = V1ProductionEvent.objects.count()
-        v2_event_count = BusinessEvent.objects.filter(
-            legacy_app='product', legacy_model='ProductionEvent'
-        ).count()
+        v1_event_count, _ = self._safe_count(V1ProductionEvent)
+        v2_event_count, _ = self._safe_count(
+            BusinessEvent, filter_kwargs={'legacy_app': 'product', 'legacy_model': 'ProductionEvent'}
+        )
+
+        audit_count, _ = self._safe_count(AuditLog)
 
         return {
             'entity_comparisons': results,
+            'migration_map_table_exists': not mm_missing,
             'migration_map_types_found': all_map_types,
             'migration_map_types_missing': missing_types,
             'business_event_migration': {
                 'v1_events': v1_event_count,
                 'v2_events_tagged_legacy': v2_event_count,
             },
-            'audit_log_count': AuditLog.objects.count(),
+            'audit_log_count': audit_count,
             'summary': self._summarize(results),
         }
 
@@ -125,9 +158,13 @@ class Command(BaseCommand):
         self.stdout.write(self.style.WARNING('Entity Comparisons:'))
         for r in report['entity_comparisons']:
             status = self.style.SUCCESS('RECONCILED') if r['reconciled'] else self.style.ERROR('MISMATCH')
+            v1_note = ' (v1 table missing)' if r['v1_table_missing'] else ''
+            v2_note = ' (v2 schema not applied)' if r['v2_table_missing'] else ''
+            mm_note = ' (no migration map)' if r['migration_map_table_missing'] else ''
             self.stdout.write(
                 f'  {r["entity"]:20s} V1: {r["v1_count"]:>8d}  V2: {r["v2_count"]:>8d}  '
-                f'Map: {r["migration_map_entries"]:>6d}  {status}'
+                f'Map: {r["migration_map_entries"]:>6f}  {status}'
+                f'{v1_note}{v2_note}{mm_note}'
             )
 
         self.stdout.write('')
