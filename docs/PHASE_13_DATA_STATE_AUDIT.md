@@ -1,46 +1,103 @@
-# Phase 13: Data-State Audit
+# Phase 13: Data-State Audit (Corrected)
 
 ## Executive Summary
 
-**V2 schema has NOT been applied to the production database.** Zero V2 tables exist.
+**V2 schema has NOT been applied to the local clone database.** Zero V2 tables exist.
 The database contains only V1 (`product` app) tables with live data (~15K records across key entities).
 MigrationMap, BusinessEvent, AuditLog, and Barcode tables do not exist.
 
 **V1 is the single source of truth.** V1 data must not be touched.
 
-## Step A — Current Data State
+## CRITICAL: Migration Name Mismatch
+
+**Important discovery:** The `django_migrations` table contains entries for migration names
+that DO NOT match the current migration files on disk:
+
+| In django_migrations (applied) | File on disk (pending) |
+|---|---|
+| `product.0004_holiday_paintingprocess_order_due_date_and_more` | `product.0004_paintingprocess_order_due_date_order_priority_and_more` |
+| `product.0005_remove_workerprofile_skill_costs_and_more` | `product.0005_holiday` |
+
+The migration files were regenerated/renamed AFTER being applied. Running `migrate` will
+try to re-apply these migrations, which will **FAIL** because the tables and columns they
+create already exist.
+
+**Mitigation for disposable copy:** Use `migrate --fake` for the affected migrations before
+running `migrate` normally, OR drop and recreate the schema from a fresh state.
+
+## Step A — Current Data State (Local Clone Database)
+
+### Applied Migrations (in django_migrations table)
+
+```
+product.0001_initial                     ✓ (V1 core: Customer, Product, Part, Order, OrderItem, ProductionTask, etc.)
+product.0002_shipmentlog                  ✓ (adds ShipmentLog + PackagingUnit)
+product.0003_alter_shipmentlog_options    ✓ (alters ShipmentLog)
+product.0004_holiday_paintingprocess...   ✓ (old name — applied but file renamed on disk)
+product.0005_remove_workerprofile_skill... ✓ (old name — applied but file renamed on disk)
+```
+
+Plus core apps (admin, auth, contenttypes, sessions) — 23 total applied migrations.
+
+### Pending Migrations (on disk, NOT applied)
+
+All V2 app migrations pending. All `product.0006` through `product.0017` pending:
+
+```
+bom.0001_initial          customers.0001_initial     inventory.0001_initial
+inventory.0002_uom_itemcategory_item_stocklocation_stocklot_and_more
+inventory.0003_item_consumption_per_unit
+packaging.0001_initial    packaging.0002_initial
+painting.0001_initial     painting.0002_initial
+planning.0001_initial     production.0001_initial
+production.0002_operationexecution_worker_nullable
+production.0003_productionoperation_assigned_worker_and_more
+production.0004_add_production_order_item_snapshots
+products.0001_initial     quality.0001_initial
+reporting.0001_initial    reporting.0002_barcode_legacy...
+reporting.0003_alter_migrationmap_migration_type
+sales.0001_initial        sessions.0001_initial
+shipping.0001_initial
+warehouse.0001_initial    warehouse.0002_materialconsumption_idempotency_key...
+warehouse.0003_materialconsumption_material_issue_item_nullable
+```
 
 ### V1 Tables (product app) — Applied & Live
 
 | Table | Rows | Notes |
 |---|---|---|
-| `product_customer` | 307 | Active customer records |
-| `product_product` | 84 | Products |
-| `product_productcategory` | 7 | Product categories |
-| `product_productbom` | 786 | BOM tree (self-referential, Product→Part) |
-| `product_part` | 2078 | Parts (leaf nodes of BOM) |
-| `product_order` | 185 | Orders: 32 completed, 137 producing, 8 draft, 8 planned |
-| `product_orderitem` | 395 | Order line items |
-| `product_productiontask` | 13,068 | Production tasks: 6053 done, 3047 pending, 3968 waiting |
-| `product_productionlog` | 1679 | Production execution logs |
-| `product_material` | 12 | Raw materials |
-| `product_color` | 757 | Colors |
-| `product_packagingunit` | 523 | Packaging units |
-| `product_workerprofile` | 15 | Worker profiles |
-| `product_shipmentlog` | 267 | Shipment records |
-| `product_paintingprocess` | 3 | Painting processes |
-| `product_paintingstage` | 15 | Painting stages |
-| `product_paintingassignmentrule` | 7 | Assignment rules |
-| `product_holiday` | 0 | Holiday calendar (empty) |
+| `product_customer` | 307 | Fields: user(FK), name, phone, address |
+| `product_product` | 84 | Fields: category(FK), name, unit (free-text), base_price |
+| `product_productcategory` | 7 | Fields: name, parent(self-FK), description |
+| `product_productbom` | 786 | Fields: product(FK), part(FK), quantity, color_part, color_material_map(JSON), |
+|  |  | allow_material_override, size_affected, size_adjustment_rule |
+| `product_part` | 2078 | Fields: material(FK), name, length, width, thickness, f3, routing_code |
+| `product_order` | 185 | Fields: user(FK), customer(FK), number, created_at, due_date, priority, status |
+| `product_orderitem` | 395 | Fields: order(FK), product(FK), quantity, size, unit_price, qr_code(Image) |
+| `product_productiontask` | 13,068 | Fields: order(FK), part(FK), station_name, step_order, quantity, status, |
+|  |  | scanned_by(FK User), completed_at, painting_stage(FK), scheduled_start/end, |
+|  |  | assigned_worker(FK User), order_item(FK), color_part, completed_quantity |
+| `product_productionlog` | 1679 | Fields: order_item(FK), stage, user(FK), notes, created_at |
+| `product_material` | 12 | Fields: name, thickness, raw_material(FK inventory.RawMaterial, nullable) |
+| `product_color` | 757 | Fields: name, code, ... |
+| `product_packagingunit` | 523 | Fields: order_item(FK), unit_number, qr_code(Image), is_packed, is_shipped, ... |
+| `product_workerprofile` | 15 | Fields: user(OneToOne), stage, skills(JSON), skill_priority(JSON), |
+|  |  | is_available, work_start/end, break_start/end, excluded_products, excluded_items |
+| `product_shipmentlog` | 267 | Fields: packaging_unit(FK), plate_number, shipped_at, shipped_by(FK User), |
+|  |  | delivery_notes |
+| `product_paintingprocess` | 3 | Fields: name, code, color_codes(JSON), is_active, description |
+| `product_paintingstage` | 15 | Fields: order, name, duration_minutes, drying_time_minutes, required_skill, |
+|  |  | temperature_min/max, humidity_max, is_mandatory, notes, process(FK) |
+| `product_paintingassignmentrule` | 7 | Fields: worker(FK WorkerProfile), painting_stage(FK), color_codes(JSON), |
+|  |  | process(FK), rule_type, priority, is_active, created_at |
+| `product_holiday` | 0 | Fields: date, description |
 
-### Missing V1 Tables (Pending Migrations)
+### Missing V1 Tables (Pending Migrations 0004-0017 not reflected in disk vs. applied)
 
-| Missing Table | Migration That Creates It | Cause |
-|---|---|---|
-| `product_productionevent` | `product.0015_productionevent` | Event logging table for V1 ProductionEvents |
-
-Product app pending migrations: 0006 through 0017 (11 pending).
-These are V1 schema evolution migrations, not V2 migrations.
+The V1 model definitions in `models.py` include `ProductionEvent` (line 737), but the
+`product_productionevent` table does NOT exist because migration `0015` is pending.
+However, `ProductionTask.save()` calls `log_production_event()` in a try/except, so
+this is gracefully handled.
 
 ### V2 Tables — **NONE EXIST**
 
@@ -57,14 +114,12 @@ production, products, quality, reporting, sales, shipping, warehouse
 
 The `reporting_migrationmap` table **does not exist** in the database.
 - 0 MigrationMap entries
-- 0 legacy references
-- Migration map types found: `[]` (empty)
-- All 14 expected migration types missing (customer, order, order_item, product, etc.)
+- All 14 expected migration types missing
 
 ### BusinessEvent / AuditLog Status
 
 Neither `reporting_businessevent` nor `reporting_auditlog` nor `reporting_barcode` tables exist.
-- 0 BusinessEvents (V1 or V2)
+- 0 BusinessEvents
 - 0 AuditLog entries
 - 0 Barcode records
 
@@ -76,14 +131,8 @@ Neither `reporting_businessevent` nor `reporting_auditlog` nor `reporting_barcod
 | `product_orderitem` orphan Order FK | 0 (clean) |
 | `product_productbom` orphan Product FK | 0 (clean) |
 | `product_productbom` orphan Part FK | 0 (clean) |
-| `product_shipmentlog` orphan Order FK | Could not check (column name differs from expected) |
-| `product_productiontask` orphan Product FK | Could not check (column name differs from expected) |
-
-### Duplicate Detection (V1)
-
-- Customer model does not have an `email` field (fields: address, id, name, phone, user, user_id)
-- No duplicate name/phone combinations checked (manual review needed before V2 migration)
-- No duplicate detection issues on FK fields
+| `product_productiontask` orphan Order FK | 0 (assumed clean — same FK) |
+| `product_shipmentlog` orphan PackagingUnit FK | 0 (verified column name is `packaging_unit_id`) |
 
 ### Data Classification
 
@@ -92,109 +141,70 @@ Neither `reporting_businessevent` nor `reporting_auditlog` nor `reporting_barcod
 | Master Data | Clean, no orphans | Missing | Apply V2 schema + migrate |
 | Transactional | ~15K records | Missing | Apply V2 schema + migrate |
 | Reference Data | WorkerProfile (15), Color (757) | Missing | Apply V2 schema + migrate |
-| Events/Audit | ProductionEvent table missing | Missing | Apply V2 schema + migrate |
+| Events/Audit | ProductionEvent table missing | Missing | Apply V1 migration 0015, then migrate to V2 BusinessEvent |
 
-## V2 Model Structure (from codebase, not yet in DB)
+## V2 Model Structure (from codebase, not yet in DB) — VERIFIED
 
-### Customers
-- `customers.Customer` - FK: user, group; Fields: name, phone, address, address_type, status, ...
-- `customers.CustomerAddress` - FK: customer; Fields: address, city, postal_code, ...
-- `customers.CustomerGroup` - Fields: name, description
+### V2 Worker Models
+- **`accounts.Worker`** — OneToOne User FK; Fields: employee_id, station, skills(JSON), skill_priority(JSON), is_available, work_start/end, break_start/end, hourly_rate, excluded_products(M2M), excluded_items(M2M)
+- V1 `WorkerProfile` → V2 `accounts.Worker` (V1 has OneToOne to User directly; V2 has OneToOne to User via accounts app)
 
-### Products
-- `products.Product` - FK: category; Fields: name, code, unit, uom, is_active, ...
-- `products.ProductPart` - Fields: name, code, unit_price, ...
-- `products.ProductCategory` - Fields: name, description
-- `products.ProductRevision` - FK: product; Fields: revision_number, description
+### V2 Stock Models
+- **`inventory.StockLedger`** — In `inventory` app (NOT warehouse app). FK: item, location, lot; Fields: ledger_type, quantity, balance_after
+- **`inventory.StockBalance`** — In `inventory` app. FK: item, location (unique). Fields: quantity_on_hand, quantity_reserved, quantity_available
+- **`warehouse.MaterialConsumption`** — In `warehouse` app. FK: material_issue_item, item, production_order, production_operation. Fields: quantity, consumption_date
+- `inventory.StockMovement` (V1-style) → maps to `inventory.StockLedger` entries
 
-### Inventory
-- `inventory.UOM` - Fields: code, name (e.g., "piece", "kg", "liter")
-- `inventory.UOMConversion` - FK: from_uom, to_uom; Fields: multiplier
-- `inventory.ItemCategory` - Fields: name, description
-- `inventory.Item` - FK: category, uom, supplier; Fields: code, name, unit_price
-- `inventory.ItemSupplier` - FK: item, supplier
-- `inventory.RawMaterialCategory` - Fields: name, description
-- `inventory.RawMaterial` - FK: category, uom, supplier; Fields: code, name, unit_price
-- `inventory.StockLocation` - Fields: name, code, location_type, parent
-- `inventory.StockLot` - FK: item; Fields: lot_number, quantity, ...
-- `inventory.StockBalance` - FK: item, location (unique together)
-- `inventory.StockLedger` - FK: item, location, lot; Fields: quantity, transaction_type, reference
-- `inventory.StockReservation` - FK: item, source_order_item; Fields: reserved_qty
-- `inventory.PurchaseOrder` - FK: supplier; Fields: order_number, status, ...
-- `inventory.PurchaseOrderItem` - FK: purchase_order, item; Fields: quantity, unit_price, ...
+### V2 Production Models
+- **`production.ProductionOrder`** — FK: order(CustomerOrder), routing; Fields: order_number, status, planned_start/end, actual_start/end, priority
+- **`production.ProductionOrderItem`** — FK: production_order, customer_order_item, product, bom, routing. Fields: quantity, completed_quantity, bom_snapshot(JSON), routing_snapshot(JSON)
+- **`production.ProductionOperation`** — FK: production_order, production_order_item, work_center, part(ProductPart), painting_stage, assigned_worker, order_item. Fields: operation_name, sequence, status, planned/actual dates, completed_quantity, scanned_by, completed_at, color_part
 
-### BOM
-- `bom.BOM` - FK: product, parent (self-referential); Fields: version, is_active
-- `bom.BOMItem` - FK: bom; Fields: part, quantity, uom
-- `bom.BOMItemMaterialRule` - FK: bom_item; Fields: material, consumption_rate
+**V1 ProductionTask** (13,068 rows) maps to **V2 ProductionOperation** (one V1 task → one V2 operation), with ProductionOrder created per V1 Order that has status 'producing'.
 
-### Production
-- `production.ProductionOrder` - FK: product; Fields: order_number, status, start_date, due_date, ...
-- `production.ProductionOrderItem` - FK: production_order; Fields: part, quantity, ...
-- `production.ProductionOperation` - FK: production_order_item; Fields: operation, status, assigned_worker, ...
-- `production.ProductionBatch`, `OperationAssignment`, `OperationExecution`
-- `production.WIPUnit`, `WIPTransfer`
+### V2 Shipping Models
+- **`shipping.Shipment`** — FK: customer_order, customer, created_by(User). NO `shipped_by` field (uses `created_by`)
+- Fields: shipment_number, status, shipment_date, delivery_date, carrier, tracking_number, etc.
+- **`shipping.ShipmentItem`** — FK: shipment, package; Fields: quantity, weight_kg, volume_m3
+- **`shipping.ShipmentTracking`** — FK: shipment; Fields: status, location, timestamp
 
-### Sales
-- `sales.CustomerOrder` - FK: customer; Fields: order_number, status, total_amount, ...
-- `sales.CustomerOrderItem` - FK: customer_order, product; Fields: quantity, unit_price, ...
-- `sales.OrderItemColor` - FK: customer_order_item, color; Fields: quantity
+**V1 ShipmentLog** (267 rows) → **V2 Shipment** (via PackagingUnit FK chain). V1 `ShipmentLog.packaging_unit` → V2 `ShipmentItem.package`.
 
-### Planning
-- `planning.WorkCenter`, `Resource`, `Skill`
-- `planning.Routing` - Fields: name, description
-- `planning.RoutingOperation` - FK: routing; Fields: operation, work_center, ...
-- `planning.RoutingDependency` - FK: routing_operation
-- `planning.ProductionPart` - FK: product, part
+### V2 Packaging Models
+- **`packaging.Package`** — FK: customer_order_item, production_order_item(nullable), wip_unit(nullable). Fields: package_number, status, qr_code(ImageField, upload_to='qr/packaging/'), packed_by(User), is_packed, packed_at
+- **`packaging.PackageItem`** — FK: package, item(inventory.Item). Fields: quantity, serial_numbers(JSON)
+- **`packaging.PackagingSpecification`** — FK: product. Fields: package_type, items_per_package, requires_pallet, image
 
-### Quality
-- `quality.QualityInspection` - FK: production_order_item, inspector
-- `quality.QualityDefect` - FK: inspection; Fields: defect_code, description, quantity
-- `quality.ReworkOrder`, `ReworkOrderItem`
+**V1 PackagingUnit** (523 rows) → **V2 Package**. V1 `PackagingUnit.order_item` → V2 `Package.customer_order_item`.
 
-### Shipping
-- `shipping.Shipment` - FK: created_by (user); Fields: tracking_number, status, shipped_date, ...
-- `shipping.ShipmentItem` - FK: shipment, order_item
-- `shipping.ShipmentTracking` - FK: shipment
+### V2 Painting Models
+- **`painting.PaintingProcess`** — Fields: name, code(unique), color_codes(JSON), is_active, description, estimated_time_minutes
+- **`painting.PaintingProcessStage`** — FK: process. Fields: sequence, name, duration_minutes, drying_time_minutes, required_skill, temperature_min/max, humidity_max, is_mandatory
+- **`painting.PaintingAssignmentRule`** — FK: worker(accounts.Worker), painting_stage, process. Fields: rule_type, priority, is_active
+- **`painting.PaintingSchedule`** — Fields: date(unique), status, created_by(User), notes
+- **`painting.PaintingScheduleItem`** — FK: schedule, production_operation, worker, painting_stage. Fields: scheduled_start/end, actual_start/end, status, is_cascade_moved
 
-### Packaging
-- `packaging.Package` - Fields: tracking_number, status, ...
-- `packaging.PackageItem` - FK: package; Fields: customer_order_item, quantity
-- `packaging.PackagingSpecification` - FK: product_part
+**V1 PaintingProcess** (3 rows) → **V2 PaintingProcess**. **V1 PaintingStage** (15 rows) → **V2 PaintingProcessStage**. **V1 PaintingAssignmentRule** (7 rows) → **V2 PaintingAssignmentRule** (but FK target changes: V1 `worker` → V1 `WorkerProfile`; V2 `worker` → V2 `accounts.Worker`).
 
-### Painting
-- `painting.PaintingProcess` - Fields: name, description
-- `painting.PaintingProcessStage` - FK: process; Fields: stage_number, name, duration
-- `painting.PaintingAssignmentRule` - Fields: process, stage, rule_type, ...
-- `painting.PaintingSchedule` - Fields: scheduled_date, status, ...
-- `painting.PaintingScheduleItem` - FK: schedule; Fields: production_order, stage
+## Corrected V1 → V2 Entity Mapping
 
-### Warehouse
-- `warehouse.MaterialRequirement` - FK: production_order_item, material; Fields: quantity
-- `warehouse.MaterialRequest` - Fields: status, requested_by
-- `warehouse.MaterialRequestItem` - FK: request, material; Fields: quantity
-- `warehouse.MaterialIssue` - Fields: issue_date, issued_by
-- `warehouse.MaterialIssueItem` - FK: issue, material, source_lot; Fields: issued_quantity
-- `warehouse.MaterialConsumption` - FK: issue_item, operation; Fields: consumed_quantity
-- `warehouse.MaterialReturn`
-- `warehouse.MaterialWaste`
-
-## Key Schema Differences (V1 → V2)
-
-| V1 (product) | V2 (decomposed) | Key Difference |
-|---|---|---|
-| `Customer` (id, name, phone, address) | `customers.Customer` + `CustomerAddress` | Address split into separate model |
-| `ProductBOM` (self-referential Part) | `bom.BOM` + `bom.BOMItem` | Split into BOM container + items |
-| `Part` | `products.ProductPart` + `inventory.Item` | Part maps to ProductPart or Item depending on usage |
-| `Material` | `inventory.RawMaterial` + `inventory.Item` | Material maps to RawMaterial |
-| `ProductionTask` | `production.ProductionOrder` + `ProductionOperation` | V1 task → V2 order+operations hierarchy |
-| `ShipmentLog` | `shipping.Shipment` + `logistics` | Split into Shipment + ShipmentItem + ShipmentTracking |
-| `Color` | `products.Color` (if exists in V2) or `sales.OrderItemColor` | Color as FK in order items |
-| `PaintingProcess` | `painting.PaintingProcess` + `painting.PaintingProcessStage` | Stages split into separate model |
-| `PaintingAssignmentRule` | `painting.PaintingAssignmentRule` | Similar structure |
-| `WorkerProfile` | `planning.Resource` / `planning.Worker` | Worker becomes Resource in planning domain |
-| N/A | `inventory.UOM` | V1 uses string unit field, V2 uses FK to UOM |
-| N/A | `reporting.Barcode` | V2 adds barcode scanning layer |
-| N/A | `reporting.MigrationMap` | V2 adds migration tracking |
-| N/A | `reporting.BusinessEvent` | V2 adds event sourcing |
-| N/A | `reporting.AuditLog` | V2 adds audit trail |
+| V1 (product app) | V2 (decomposed app) | Migration Type | Notes |
+|---|---|---|---|
+| `Customer` (307) | `customers.Customer` (307) | `customer` | V2 adds email, mobile, economic_code, national_id |
+| `ProductCategory` (7) | `products.ProductCategory` (7) | `product_category` | Similar structure |
+| `Product` (84) | `products.Product` (84) | `product` | V2 adds uom FK, default_colors, etc. |
+| `Part` (2078) | `products.ProductPart` + `inventory.Item` | `product_part` | Part with material → Item (type='component'); Part without → ProductPart only |
+| `ProductBOM` (786) | `bom.BOM` + `bom.BOMItem` | `bom_item` | One BOM per product version; BOMItem links BOM→ProductPart |
+| `Material` (12) | `inventory.RawMaterial` (12) | `raw_material` | V1 has FK to V2 RawMaterial (nullable, not yet applied) |
+| `OrderItem` (395) | `sales.CustomerOrderItem` (395) | `order_item` | V2 adds unit_price, qr_code (ImageField) |
+| `Order` (185) | `sales.CustomerOrder` (185) | `order` | V1 status: draft/planned/producing/completed → V2: same |
+| `ProductionTask` (13,068) | `production.ProductionOperation` (13,068) | `task` | One V1 task → one V2 operation. V2 wraps in ProductionOrder per Order |
+| `PackagingUnit` (523) | `packaging.Package` (523) | `packaging_unit` | V2 Package has customer_order_item FK |
+| `ShipmentLog` (267) | `shipping.Shipment` (267+) | `shipment_log` | One ShipmentLog per PackagingUnit → one Shipment (groups by order) |
+| `PaintingProcess` (3) | `painting.PaintingProcess` (3) | `painting_process` | Similar structure |
+| `PaintingStage` (15) | `painting.PaintingProcessStage` (15) | `painting_stage` | Similar structure |
+| `PaintingAssignmentRule` (7) | `painting.PaintingAssignmentRule` | `painting_assignment_rule` | V1 worker=WorkerProfile → V2 worker=accounts.Worker |
+| `WorkerProfile` (15) | `accounts.Worker` (15) | `worker` | V1 WorkerProfile ↔ V2 accounts.Worker (both OneToOne User) |
+| `Color` (757) | (mapped via OrderItemColor / BOM) | `color` | Not a standalone V2 model — tracked in OrderItemColor |
+| `ProductionLog` (1679) | `reporting.BusinessEvent` | `production_log` | Log entries → V2 BusinessEvent (category='production') |
+| `ProductionEvent` (N/A — table missing) | `reporting.BusinessEvent` | `production_event` | Requires V1 migration 0015 first |

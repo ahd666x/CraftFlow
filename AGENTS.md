@@ -19,6 +19,14 @@ python -m django craftflow_reconcile_v2 --settings=selvi.settings
 python -m django craftflow_migrate_v2 --settings=selvi.settings
 ```
 
+## Test Isolation Notes
+
+- `MEDIA_ROOT` is configurable via `DJANGO_MEDIA_ROOT` environment variable.
+  When set, file uploads (including QR codes) write to a temp directory.
+  The `conftest.py` at project root auto-sets `DJANGO_MEDIA_ROOT` to a
+  `tempfile.mkdtemp()` when running tests.
+- No QR files persist in the repository — they go to the OS temp directory.
+
 ## Lint / Type Check
 
 No formal linter or type checker is currently configured. All validation is via the Django test suite (143 tests).

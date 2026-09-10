@@ -176,7 +176,7 @@ LOGOUT_REDIRECT_URL = '/'
 
 STATIC_ROOT = BASE_DIR / 'staticfiles'
 MEDIA_URL = '/media/'
-MEDIA_ROOT = '/root/selvi/selvi/media'
+MEDIA_ROOT = os.environ.get('DJANGO_MEDIA_ROOT', '/root/selvi/selvi/media')
 
 
 
